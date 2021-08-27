@@ -94,8 +94,19 @@ function setup_vendor() {
         VENDOR_RADIO_STATE=0
     fi
 
+    export BINARIES_LOCATION="$ANDROID_ROOT"/prebuilts/extract-tools/${HOST}-x86/bin
+
+    for version in 0_8 0_9; do
+        export PATCHELF_${version}="$BINARIES_LOCATION"/patchelf-"${version}"
+    done
+
+    if [ -z "$PATCHELF_VERSION" ]; then
+        export PATCHELF_VERSION=0_9
+    fi
+
     if [ -z "$PATCHELF" ]; then
-        export PATCHELF="$ANDROID_ROOT"/prebuilts/extract-tools/${HOST}-x86/bin/patchelf
+        local patchelf_variable="PATCHELF_${PATCHELF_VERSION}"
+        export PATCHELF=${!patchelf_variable}
     fi
 }
 
@@ -347,6 +358,7 @@ function write_blueprint_packages() {
     local EXTENSION=
     local PKGNAME=
     local SRC=
+    local OVERRIDEPKG=
 
     for P in "${FILELIST[@]}"; do
         FILE=$(target_file "$P")
@@ -412,11 +424,22 @@ function write_blueprint_packages() {
                 SRC="$SRC/app"
             fi
             printf '\tapk: "%s/%s",\n' "$SRC" "$FILE"
-            if [ "$ARGS" = "PRESIGNED" ]; then
-                printf '\tpresigned: true,\n'
-            elif [ ! -z "$ARGS" ]; then
-                printf '\tcertificate: "%s",\n' "$ARGS"
-            else
+            ARGS=(${ARGS//;/ })
+            USE_PLATFORM_CERTIFICATE="true"
+            for ARG in "${ARGS[@]}"; do
+                if [ "$ARG" = "PRESIGNED" ]; then
+                    USE_PLATFORM_CERTIFICATE="false"
+                    printf '\tpresigned: true,\n'
+                elif [[ "$ARG" =~ "OVERRIDES" ]]; then
+                    OVERRIDEPKG=${ARG#*=}
+                    OVERRIDEPKG=${OVERRIDEPKG//,/ }
+                    printf '\toverrides: ["%s"],\n' "$OVERRIDEPKG"
+                elif [ ! -z "$ARG" ]; then
+                    USE_PLATFORM_CERTIFICATE="false"
+                    printf '\tcertificate: "%s",\n' "$ARG"
+                fi
+            done
+            if [ "$USE_PLATFORM_CERTIFICATE" = "true" ]; then
                 printf '\tcertificate: "platform",\n'
             fi
         elif [ "$CLASS" = "JAVA_LIBRARIES" ]; then
@@ -454,6 +477,9 @@ function write_blueprint_packages() {
                 SRC="$SRC/bin"
             fi
             printf '\tsrcs: ["%s/%s"],\n' "$SRC" "$FILE"
+            if [ "$EXTENSION" != "sh" ]; then
+                printf '\tcheck_elf_files: false,\n'
+            fi
             unset EXTENSION
         else
             printf '\tsrcs: ["%s/%s"],\n' "$SRC" "$FILE"
@@ -1578,7 +1604,7 @@ function extract() {
             done
 
             if [ "${FOUND}" = false ]; then
-                printf '    !! %s: file not found in source\n' "${BLOB_DISPLAY_NAME}"
+                colored_echo red "    !! ${BLOB_DISPLAY_NAME}: file not found in source"
                 continue
             fi
         fi
@@ -1623,8 +1649,8 @@ function extract() {
             printf "    + Fixed up %s\n" "${BLOB_DISPLAY_NAME}"
             # Now sanity-check the spec for this blob.
             if [ "${KANG}" = false ] && [ "${FIXUP_HASH}" = "x" ] && [ "${HASH}" != "x" ]; then
-                printf "WARNING: The %s file was fixed up, but it is pinned.\n" ${BLOB_DISPLAY_NAME}
-                printf "This is a mistake and you want to either remove the hash completely, or add an extra one.\n"
+                colored_echo yellow "WARNING: The ${BLOB_DISPLAY_NAME} file was fixed up, but it is pinned."
+                colored_echo yellow "This is a mistake and you want to either remove the hash completely, or add an extra one."
             fi
         fi
 
@@ -1768,4 +1794,25 @@ function generate_prop_list_from_image() {
 
     # Clean-up
     rm -f "$output_list_tmp"
+}
+
+function colored_echo() {
+    IFS=" "
+    local color=$1;
+    shift
+    if ! [[ $color =~ '^[0-9]$' ]] ; then
+        case $(echo $color | tr '[:upper:]' '[:lower:]') in
+        black) color=0 ;;
+        red) color=1 ;;
+        green) color=2 ;;
+        yellow) color=3 ;;
+        blue) color=4 ;;
+        magenta) color=5 ;;
+        cyan) color=6 ;;
+        white|*) color=7 ;; # white or invalid color
+        esac
+    fi
+    if [ -t 1 ] ; then tput setaf $color; fi
+    printf '%s\n' "$*"
+    if [ -t 1 ] ; then tput sgr0; fi
 }
