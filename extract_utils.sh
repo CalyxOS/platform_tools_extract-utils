@@ -414,6 +414,13 @@ function write_blueprint_packages() {
                 printf '\tcompile_multilib: "%s",\n' "$EXTRA"
             fi
             printf '\tcheck_elf_files: false,\n'
+        elif [ "$CLASS" = "APEX" ]; then
+            printf 'prebuilt_apex {\n'
+            printf '\tname: "%s",\n' "$PKGNAME"
+            printf '\towner: "%s",\n' "$VENDOR"
+            SRC="$SRC/apex"
+            printf '\tsrc: "%s/%s",\n' "$SRC" "$FILE"
+            printf '\tfilename: "%s",\n' "$FILE"
         elif [ "$CLASS" = "APPS" ]; then
             printf 'android_app_import {\n'
             printf '\tname: "%s",\n' "$PKGNAME"
@@ -781,6 +788,24 @@ function write_product_packages() {
         write_blueprint_packages "SHARED_LIBRARIES" "odm" "64" "O_LIB64" >> "$ANDROIDBP"
     fi
 
+    # APEX
+    local APEX=( $(prefix_match "apex/") )
+    if [ "${#APEX[@]}" -gt "0" ]; then
+        write_blueprint_packages "APEX" "" "" "APEX" >> "$ANDROIDBP"
+    fi
+    local S_APEX=( $(prefix_match "system/apex/") )
+    if [ "${#S_APEX[@]}" -gt "0" ]; then
+        write_blueprint_packages "APEX" "system" "" "S_APEX" >> "$ANDROIDBP"
+    fi
+    local V_APEX=( $(prefix_match "vendor/apex/") )
+    if [ "${#V_APEX[@]}" -gt "0" ]; then
+        write_blueprint_packages "APEX" "vendor" "" "V_APEX" >> "$ANDROIDBP"
+    fi
+    local SE_APEX=( $(prefix_match "system_ext/apex/") )
+    if [ "${#SE_APEX[@]}" -gt "0" ]; then
+        write_blueprint_packages "APEX" "system_ext" "" "SE_APEX" >> "$ANDROIDBP"
+    fi
+
     # Apps
     local APPS=( $(prefix_match "app/") )
     if [ "${#APPS[@]}" -gt "0" ]; then
@@ -1117,6 +1142,14 @@ function parse_file_list() {
         # if line starts with a dash, it needs to be packaged
         if [[ "$SPEC" =~ ^- ]]; then
             PRODUCT_PACKAGES_LIST+=("${SPEC#-}")
+            PRODUCT_PACKAGES_HASHES+=("$HASH")
+            PRODUCT_PACKAGES_FIXUP_HASHES+=("$FIXUP_HASH")
+        # if line contains apex, apk, jar or vintf fragment, it needs to be packaged
+        elif suffix_match_file ".apex" "$(src_file "$SPEC")" || \
+             suffix_match_file ".apk" "$(src_file "$SPEC")" || \
+             suffix_match_file ".jar" "$(src_file "$SPEC")" || \
+             [[ "$SPEC" == *"etc/vintf/manifest/"* ]]; then
+            PRODUCT_PACKAGES_LIST+=("$SPEC")
             PRODUCT_PACKAGES_HASHES+=("$HASH")
             PRODUCT_PACKAGES_FIXUP_HASHES+=("$FIXUP_HASH")
         else
@@ -1486,10 +1519,9 @@ function extract() {
             unzip "$SRC" -d "$DUMPDIR"
             echo "$MD5" > "$DUMPDIR"/zipmd5.txt
 
-            # Stop if an A/B OTA zip is detected. We cannot extract these.
+            # Extract A/B OTA
             if [ -a "$DUMPDIR"/payload.bin ]; then
-                echo "A/B style OTA zip detected. This is not supported at this time. Stopping..."
-                exit 1
+                python3 "$ANDROID_ROOT"/tools/extract-utils/extract_ota.py "$DUMPDIR"/payload.bin -o "$DUMPDIR" -p "system" "odm" "product" "system_ext" "vendor" 2>&1
             fi
 
             for PARTITION in "system" "odm" "product" "system_ext" "vendor"
@@ -1505,14 +1537,37 @@ function extract() {
                     python "$ANDROID_ROOT"/tools/extract-utils/sdat2img.py "$DUMPDIR"/"$PARTITION".transfer.list "$DUMPDIR"/"$PARTITION".new.dat "$DUMPDIR"/"$PARTITION".img 2>&1
                     rm -rf "$DUMPDIR"/"$PARTITION".new.dat "$DUMPDIR"/"$PARTITION"
                     mkdir "$DUMPDIR"/"$PARTITION" "$DUMPDIR"/tmp
-                    echo "Requesting sudo access to mount the "$PARTITION".img"
-                    sudo mount -o loop "$DUMPDIR"/"$PARTITION".img "$DUMPDIR"/tmp
-                    cp -r "$DUMPDIR"/tmp/* "$DUMPDIR"/"$PARTITION"/
-                    sudo umount "$DUMPDIR"/tmp
-                    rm -rf "$DUMPDIR"/tmp "$DUMPDIR"/"$PARTITION".img
+                    extract_img_data "$DUMPDIR"/"$PARTITION".img "$DUMPDIR"/"$PARTITION"/
+                    rm "$DUMPDIR"/"$PARTITION".img
+                fi
+                if [ -a "$DUMPDIR"/"$PARTITION".img ]; then
+                    extract_img_data "$DUMPDIR"/"$PARTITION".img "$DUMPDIR"/"$PARTITION"/
                 fi
             done
         fi
+
+        SRC="$DUMPDIR"
+    fi
+
+    if [ -d "$SRC" ] && [ -f "$SRC"/system.img ]; then
+        DUMPDIR="$TMPDIR"/system_dump
+        mkdir -p "$DUMPDIR"
+
+        for PARTITION in "system" "odm" "product" "system_ext" "vendor"
+        do
+            echo "Extracting "$PARTITION""
+            local IMAGE="$SRC"/"$PARTITION".img
+            if [ -f "$IMAGE" ]; then
+                if [[ $(file -b "$IMAGE") == Linux* ]]; then
+                    extract_img_data "$IMAGE" "$DUMPDIR"/"$PARTITION"
+                elif [[ $(file -b "$IMAGE") == Android* ]]; then
+                    simg2img "$IMAGE" "$DUMPDIR"/"$PARTITION".raw
+                    extract_img_data "$DUMPDIR"/"$PARTITION".raw "$DUMPDIR"/"$PARTITION"/
+                else
+                    echo "Unsupported "$IMAGE""
+                fi
+            fi
+        done
 
         SRC="$DUMPDIR"
     fi
@@ -1733,30 +1788,10 @@ function extract_img_data() {
     local symlink_err="rdump: Attempt to read block from filesystem resulted in short read while reading symlink"
     if grep -Fq "$symlink_err" "$logFile"; then
         echo "[-] Symlinks have not been properly processed from $image_file"
-        echo "[!] If you don't have a compatible debugfs version, modify 'execute-all.sh' to disable 'USE_DEBUGFS' flag"
+        echo "[!] You might not have a compatible debugfs version"
         abort 1
     fi
 }
-
-declare -ra VENDOR_SKIP_FILES=(
-  "bin/toybox_vendor"
-  "bin/toolbox"
-  "bin/grep"
-  "build.prop"
-  "compatibility_matrix.xml"
-  "default.prop"
-  "etc/NOTICE.xml.gz"
-  "etc/vintf/compatibility_matrix.xml"
-  "etc/vintf/manifest.xml"
-  "etc/wifi/wpa_supplicant.conf"
-  "manifest.xml"
-  "overlay/DisplayCutoutEmulationCorner/DisplayCutoutEmulationCornerOverlay.apk"
-  "overlay/DisplayCutoutEmulationDouble/DisplayCutoutEmulationDoubleOverlay.apk"
-  "overlay/DisplayCutoutEmulationTall/DisplayCutoutEmulationTallOverlay.apk"
-  "overlay/DisplayCutoutNoCutout/NoCutoutOverlay.apk"
-  "overlay/framework-res__auto_generated_rro.apk"
-  "overlay/SysuiDarkTheme/SysuiDarkThemeOverlay.apk"
-)
 
 function array_contains() {
     local element
@@ -1769,32 +1804,39 @@ function generate_prop_list_from_image() {
     local image_dir="$TMPDIR/image-temp"
     local output_list="$2"
     local output_list_tmp="$TMPDIR/_proprietary-blobs.txt"
-    local -n skipped_vendor_files="$3"
+    local -n skipped_files="$3"
+    local partition="$4"
 
-    extract_img_data "$image_file" "$image_dir"
+    mkdir -p "$image_dir"
+
+    if [[ $(file -b "$image_file") == Linux* ]]; then
+        extract_img_data "$image_file" "$image_dir"
+    elif [[ $(file -b "$image_file") == Android* ]]; then
+        simg2img "$image_file" "$image_dir"/"$(basename "$image_file").raw"
+        extract_img_data "$image_dir"/"$(basename "$image_file").raw" "$image_dir"
+        rm "$image_dir"/"$(basename "$image_file").raw"
+    else
+        echo "Unsupported "$image_file""
+    fi
 
     find "$image_dir" -not -type d | sed "s#^$image_dir/##" | while read -r FILE
     do
         if suffix_match_file ".odex" "$FILE" || suffix_match_file ".vdex" "$FILE" ; then
             continue
         fi
-        # Skip VENDOR_SKIP_FILES since it will be re-generated at build time
-        if array_contains "$FILE" "${VENDOR_SKIP_FILES[@]}"; then
-            continue
-        fi
         # Skip device defined skipped files since they will be re-generated at build time
-        if array_contains "$FILE" "${skipped_vendor_files[@]}"; then
+        if array_contains "$FILE" "${skipped_files[@]}"; then
             continue
         fi
-        if suffix_match_file ".apk" "$FILE" ; then
-            echo "-vendor/$FILE" >> "$output_list_tmp"
-        else
+        if [ -z "$partition" ]; then
             echo "vendor/$FILE" >> "$output_list_tmp"
+        else
+            echo "$partition/$FILE" >> "$output_list_tmp"
         fi
     done
 
     # Sort merged file with all lists
-    sort -u "$output_list_tmp" > "$output_list"
+    LC_ALL=C sort -u "$output_list_tmp" > "$output_list"
 
     # Clean-up
     rm -f "$output_list_tmp"
