@@ -1,0 +1,21 @@
+{
+  "comments": [
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "adbbccf2_809ba04f",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000000
+      },
+      "writtenOn": "2021-12-16T14:38:45Z",
+      "side": 1,
+      "message": "Entire chain merged upstream,\n\nthis was a direct:\n```\ngit pull lineage lineage-19.0\ngit rebase m/android12\nrepo upload --cbr -t -y .\n```",
+      "revId": "d106a5b99f5d7735b36b2b2be31d3e58449474d6",
+      "serverId": "35266860-6252-469c-a67d-185064479fc0"
+    }
+  ]
+}
