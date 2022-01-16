@@ -443,7 +443,13 @@ function write_blueprint_packages() {
                     printf '\toverrides: ["%s"],\n' "$OVERRIDEPKG"
                 elif [ ! -z "$ARG" ]; then
                     USE_PLATFORM_CERTIFICATE="false"
-                    printf '\tcertificate: "%s",\n' "$ARG"
+                    # We can use the name directly if its here
+                    if [[ -e "$ANDROID_ROOT"/build/make/target/product/security/"$ARG".pk8 ]]; then
+                        printf '\tcertificate: "%s",\n' "$ARG"
+                    else
+                    # Otherwise assume that it has been setup as a target
+                        printf '\tcertificate: ":%s.certificate",\n' "$ARG"
+                    fi
                 fi
             done
             if [ "$USE_PLATFORM_CERTIFICATE" = "true" ]; then
