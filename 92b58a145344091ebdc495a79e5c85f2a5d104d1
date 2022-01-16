@@ -1,0 +1,21 @@
+{
+  "comments": [
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "f898d8a4_8fa96c18",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000000
+      },
+      "writtenOn": "2022-01-16T23:22:13Z",
+      "side": 1,
+      "message": "$pkgname.certificate is the usual android naming scheme.",
+      "revId": "92b58a145344091ebdc495a79e5c85f2a5d104d1",
+      "serverId": "35266860-6252-469c-a67d-185064479fc0"
+    }
+  ]
+}
