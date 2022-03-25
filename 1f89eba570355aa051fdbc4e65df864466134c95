@@ -1,0 +1,21 @@
+{
+  "comments": [
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "cba5c167_16b12ea4",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 2
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000004
+      },
+      "writtenOn": "2022-03-25T17:33:58Z",
+      "side": 1,
+      "message": "Works for FP4 at least",
+      "revId": "1f89eba570355aa051fdbc4e65df864466134c95",
+      "serverId": "35266860-6252-469c-a67d-185064479fc0"
+    }
+  ]
+}
