@@ -16,6 +16,24 @@
       "message": "Given that we\u0027ve already got ota payload extraction, this should be relatively straightforward.",
       "revId": "9da6299201d9e0706ee8362a4324f366906d720d",
       "serverId": "35266860-6252-469c-a67d-185064479fc0"
+    },
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "40001e9a_8cefdd17",
+        "filename": "/COMMIT_MSG",
+        "patchSetId": 1
+      },
+      "lineNbr": 19,
+      "author": {
+        "id": 1000000
+      },
+      "writtenOn": "2022-03-25T20:10:10Z",
+      "side": 1,
+      "message": "Ack",
+      "parentUuid": "3f2c987e_4700b684",
+      "revId": "9da6299201d9e0706ee8362a4324f366906d720d",
+      "serverId": "35266860-6252-469c-a67d-185064479fc0"
     }
   ]
 }
