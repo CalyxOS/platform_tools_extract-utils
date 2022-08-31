@@ -16,6 +16,24 @@
       "message": "We should send this upstream and fix it to extract from OTA (at the moment it only extracts from factory, which doesn\u0027t work for FP4.",
       "revId": "aae8a053b51244360fcbcbb45cfdc1720790ea87",
       "serverId": "35266860-6252-469c-a67d-185064479fc0"
+    },
+    {
+      "unresolved": true,
+      "key": {
+        "uuid": "83146ff7_7e316a57",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000000
+      },
+      "writtenOn": "2022-08-31T13:15:31Z",
+      "side": 1,
+      "message": "We do OTA extraction for pixel 6 in our scripts.\n\nIn theory that could move to this as well.\n\nBut that could also be switched to extracting from factory to avoid downloading a second image.",
+      "parentUuid": "422c52cb_dcbaeb74",
+      "revId": "aae8a053b51244360fcbcbb45cfdc1720790ea87",
+      "serverId": "35266860-6252-469c-a67d-185064479fc0"
     }
   ]
 }
