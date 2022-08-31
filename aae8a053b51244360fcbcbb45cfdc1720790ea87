@@ -1,0 +1,21 @@
+{
+  "comments": [
+    {
+      "unresolved": true,
+      "key": {
+        "uuid": "422c52cb_dcbaeb74",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000004
+      },
+      "writtenOn": "2022-08-31T09:26:04Z",
+      "side": 1,
+      "message": "We should send this upstream and fix it to extract from OTA (at the moment it only extracts from factory, which doesn\u0027t work for FP4.",
+      "revId": "aae8a053b51244360fcbcbb45cfdc1720790ea87",
+      "serverId": "35266860-6252-469c-a67d-185064479fc0"
+    }
+  ]
+}
