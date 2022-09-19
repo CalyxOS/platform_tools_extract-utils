@@ -34,6 +34,24 @@
       "parentUuid": "422c52cb_dcbaeb74",
       "revId": "aae8a053b51244360fcbcbb45cfdc1720790ea87",
       "serverId": "35266860-6252-469c-a67d-185064479fc0"
+    },
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "e2e97cea_43a5cd0e",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000000
+      },
+      "writtenOn": "2022-09-19T18:34:15Z",
+      "side": 1,
+      "message": "Shipping for now for FP4, can always improve / fixup.",
+      "parentUuid": "83146ff7_7e316a57",
+      "revId": "aae8a053b51244360fcbcbb45cfdc1720790ea87",
+      "serverId": "35266860-6252-469c-a67d-185064479fc0"
     }
   ]
 }
