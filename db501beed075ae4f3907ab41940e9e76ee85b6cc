@@ -1,0 +1,21 @@
+{
+  "comments": [
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "3f5369d9_ccf7abc1",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000000
+      },
+      "writtenOn": "2022-09-19T18:34:27Z",
+      "side": 1,
+      "message": "Tested with FP4-FP4D-factory.zip",
+      "revId": "db501beed075ae4f3907ab41940e9e76ee85b6cc",
+      "serverId": "35266860-6252-469c-a67d-185064479fc0"
+    }
+  ]
+}
