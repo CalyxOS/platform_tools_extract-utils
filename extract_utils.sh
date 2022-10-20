@@ -20,7 +20,6 @@ ARCHES=
 FULLY_DEODEXED=-1
 
 SKIP_CLEANUP=${SKIP_CLEANUP:-0}
-EXTRACT_TMP_DIR=$(mktemp -d)
 HOST="$(uname | tr '[:upper:]' '[:lower:]')"
 
 #
@@ -41,11 +40,25 @@ trap cleanup 0
 #
 # setup_vendor_deps
 #
-# $1: Android root directory
+# $1: device name
+# $2: vendor name
+# $3: Android root directory
 # Sets up common dependencies for extraction
 #
 function setup_vendor_deps() {
-    export ANDROID_ROOT="$1"
+    local DEVICE="$1"
+    if [ -z "$DEVICE" ]; then
+        echo "\$DEVICE must be set before including this script!"
+        exit 1
+    fi
+
+    export VENDOR="$2"
+    if [ -z "$VENDOR" ]; then
+        echo "\$VENDOR must be set before including this script!"
+        exit 1
+    fi
+
+    export ANDROID_ROOT="$3"
     if [ ! -d "$ANDROID_ROOT" ]; then
         echo "\$ANDROID_ROOT must be set and valid before including this script!"
         exit 1
@@ -68,6 +81,14 @@ function setup_vendor_deps() {
     if [ -z "$PATCHELF" ]; then
         local patchelf_variable="PATCHELF_${PATCHELF_VERSION}"
         export PATCHELF=${!patchelf_variable}
+    fi
+
+    if [ -z "$WORK_DIR" ]; then
+        EXTRACT_TMP_DIR=$(mktemp -d)
+    else
+        EXTRACTED_DIR="$WORK_DIR"/extracted/"$VENDOR"/"$DEVICE"
+        mkdir -p "$EXTRACTED_DIR"
+        EXTRACT_TMP_DIR="$EXTRACTED_DIR"
     fi
 }
 
@@ -132,7 +153,7 @@ function setup_vendor() {
         VENDOR_RADIO_STATE=0
     fi
 
-    setup_vendor_deps "$ANDROID_ROOT"
+    setup_vendor_deps "$DEVICE" "$VENDOR" "$ANDROID_ROOT"
 }
 
 # Helper functions for parsing a spec.
