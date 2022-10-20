@@ -1,0 +1,55 @@
+{
+  "comments": [
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "59cc374b_6bcc045f",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000000
+      },
+      "writtenOn": "2022-10-20T20:44:27Z",
+      "side": 1,
+      "message": "I\u0027d rather just have a separate script tbh, dump.sh",
+      "revId": "1a0a030e509273b03fd3ec0a784892789d776bd8",
+      "serverId": "35266860-6252-469c-a67d-185064479fc0"
+    },
+    {
+      "unresolved": true,
+      "key": {
+        "uuid": "6ff61ca3_f5f4510f",
+        "filename": "extract_utils.sh",
+        "patchSetId": 1
+      },
+      "lineNbr": 48,
+      "author": {
+        "id": 1000000
+      },
+      "writtenOn": "2022-10-20T20:44:27Z",
+      "side": 1,
+      "message": "But now this needs changes to all scripts 😞",
+      "revId": "1a0a030e509273b03fd3ec0a784892789d776bd8",
+      "serverId": "35266860-6252-469c-a67d-185064479fc0"
+    },
+    {
+      "unresolved": true,
+      "key": {
+        "uuid": "88c595dc_77e8e29c",
+        "filename": "extract_utils.sh",
+        "patchSetId": 1
+      },
+      "lineNbr": 89,
+      "author": {
+        "id": 1000000
+      },
+      "writtenOn": "2022-10-20T20:44:27Z",
+      "side": 1,
+      "message": "How about EXTRACT_WORK_DIR",
+      "revId": "1a0a030e509273b03fd3ec0a784892789d776bd8",
+      "serverId": "35266860-6252-469c-a67d-185064479fc0"
+    }
+  ]
+}
