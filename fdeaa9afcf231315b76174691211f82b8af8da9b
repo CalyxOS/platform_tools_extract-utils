@@ -16,6 +16,24 @@
       "message": "Works with kebab commits.\n\nShould work with FP4 full OTA too since it extracts based on dest filenames which we set to the partition name usually.",
       "revId": "fdeaa9afcf231315b76174691211f82b8af8da9b",
       "serverId": "35266860-6252-469c-a67d-185064479fc0"
+    },
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "77cd0f0f_13f0ba6f",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000000
+      },
+      "writtenOn": "2023-06-29T13:08:34Z",
+      "side": 1,
+      "message": "Rebased it.\n\nNot sure if still wanted / needed but figured it may not hurt, should upstream.",
+      "parentUuid": "7d09f288_bf53c34d",
+      "revId": "fdeaa9afcf231315b76174691211f82b8af8da9b",
+      "serverId": "35266860-6252-469c-a67d-185064479fc0"
     }
   ]
 }
