@@ -1,0 +1,21 @@
+{
+  "comments": [
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "b27b09d1_4aae6437",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000004
+      },
+      "writtenOn": "2023-10-11T18:37:57Z",
+      "side": 1,
+      "message": "Chain sent upstream, will handle that after we move out of the staging branch.",
+      "revId": "28ff10fd4884b239ae9047466b027f2fb52e392c",
+      "serverId": "35266860-6252-469c-a67d-185064479fc0"
+    }
+  ]
+}
