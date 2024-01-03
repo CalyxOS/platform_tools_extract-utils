@@ -16,6 +16,24 @@
       "message": "Could do a merge instead too.",
       "revId": "f07f4b6ffd0332b98f4780b17023d15f56427fc4",
       "serverId": "35266860-6252-469c-a67d-185064479fc0"
+    },
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "f979ba3c_0c934b4c",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000004
+      },
+      "writtenOn": "2024-01-03T18:54:53Z",
+      "side": 1,
+      "message": "Better do a merge",
+      "parentUuid": "7da44595_fe896dde",
+      "revId": "f07f4b6ffd0332b98f4780b17023d15f56427fc4",
+      "serverId": "35266860-6252-469c-a67d-185064479fc0"
     }
   ]
 }
