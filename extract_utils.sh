@@ -55,11 +55,13 @@ function setup_vendor_deps() {
     fi
 
     export BINARIES_LOCATION="$ANDROID_ROOT"/prebuilts/extract-tools/${HOST}-x86/bin
+    export CLANG_BINUTILS="$ANDROID_ROOT"/prebuilts/clang/host/${HOST}-x86/llvm-binutils-stable
 
     export SIMG2IMG="$BINARIES_LOCATION"/simg2img
     export LPUNPACK="$BINARIES_LOCATION"/lpunpack
     export OTA_EXTRACTOR="$BINARIES_LOCATION"/ota_extractor
     export SIGSCAN="$BINARIES_LOCATION"/SigScan
+    export OBJDUMP="$CLANG_BINUTILS"/llvm-objdump
 
     for version in 0_8 0_9 0_17_2; do
         export PATCHELF_${version}="$BINARIES_LOCATION"/patchelf-"${version}"
@@ -215,17 +217,19 @@ function target_args() {
 #
 function prefix_match() {
     local PREFIX="$1"
+    local NEW_ARRAY=()
     for LINE in "${PRODUCT_PACKAGES_LIST[@]}"; do
         local FILE=$(target_file "$LINE")
         if [[ "$FILE" =~ ^"$PREFIX" ]]; then
             local ARGS=$(target_args "$LINE")
             if [ -z "${ARGS}" ]; then
-                echo "${FILE#$PREFIX}"
+                NEW_ARRAY+=("${FILE#$PREFIX}")
             else
-                echo "${FILE#$PREFIX};${ARGS}"
+                NEW_ARRAY+=("${FILE#$PREFIX};${ARGS}")
             fi
         fi
     done
+    printf '%s\n' "${NEW_ARRAY[@]}" | LC_ALL=C sort
 }
 
 #
@@ -401,6 +405,7 @@ function write_blueprint_packages() {
     local SRC=
     local STEM=
     local OVERRIDEPKG=
+    local DISABLE_CHECKELF=
 
     [ "$COMMON" -eq 1 ] && local VENDOR="${VENDOR_COMMON:-$VENDOR}"
 
@@ -421,10 +426,17 @@ function write_blueprint_packages() {
 
         # Allow overriding module name
         STEM=
+        if [ "$TARGET_ENABLE_CHECKELF" == "true" ]; then
+            DISABLE_CHECKELF=
+        else
+            DISABLE_CHECKELF="true"
+        fi
         for ARG in "${ARGS[@]}"; do
             if [[ "$ARG" =~ "MODULE" ]]; then
                 STEM="$PKGNAME"
                 PKGNAME=${ARG#*=}
+            elif [[ "$ARG" == "DISABLE_CHECKELF" ]]; then
+                DISABLE_CHECKELF="true"
             fi
         done
 
@@ -458,24 +470,44 @@ function write_blueprint_packages() {
             if [ "$EXTRA" = "both" ]; then
                 printf '\t\tandroid_arm: {\n'
                 printf '\t\t\tsrcs: ["%s/lib/%s"],\n' "$SRC" "$FILE"
+                if [ -z "$DISABLE_CHECKELF" ]; then
+                    printf '\t\t\tshared_libs: [%s],\n' "$(basename -s .so $(${OBJDUMP} -x "$ANDROID_ROOT"/"$OUTDIR"/"$SRC"/lib/"$FILE" 2>/dev/null |grep NEEDED) 2>/dev/null |grep -v ^NEEDED$ |sed 's/-3.9.1//g' |sed 's/\(.*\)/"\1",/g' |tr '\n' ' ')"
+                fi
                 printf '\t\t},\n'
                 printf '\t\tandroid_arm64: {\n'
                 printf '\t\t\tsrcs: ["%s/lib64/%s"],\n' "$SRC" "$FILE"
+                if [ -z "$DISABLE_CHECKELF" ]; then
+                    printf '\t\t\tshared_libs: [%s],\n' "$(basename -s .so $(${OBJDUMP} -x "$ANDROID_ROOT"/"$OUTDIR"/"$SRC"/lib64/"$FILE" 2>/dev/null |grep NEEDED) 2>/dev/null |grep -v ^NEEDED$ |sed 's/-3.9.1//g' |sed 's/\(.*\)/"\1",/g' |tr '\n' ' ')"
+                fi
                 printf '\t\t},\n'
             elif [ "$EXTRA" = "64" ]; then
                 printf '\t\tandroid_arm64: {\n'
                 printf '\t\t\tsrcs: ["%s/lib64/%s"],\n' "$SRC" "$FILE"
+                if [ -z "$DISABLE_CHECKELF" ]; then
+                    printf '\t\t\tshared_libs: [%s],\n' "$(basename -s .so $(${OBJDUMP} -x "$ANDROID_ROOT"/"$OUTDIR"/"$SRC"/lib64/"$FILE" 2>/dev/null |grep NEEDED) 2>/dev/null |grep -v ^NEEDED$ |sed 's/-3.9.1//g' |sed 's/\(.*\)/"\1",/g' |tr '\n' ' ')"
+                fi
                 printf '\t\t},\n'
             else
                 printf '\t\tandroid_arm: {\n'
                 printf '\t\t\tsrcs: ["%s/lib/%s"],\n' "$SRC" "$FILE"
+                if [ -z "$DISABLE_CHECKELF" ]; then
+                    printf '\t\t\tshared_libs: [%s],\n' "$(basename -s .so $(${OBJDUMP} -x "$ANDROID_ROOT"/"$OUTDIR"/"$SRC"/lib/"$FILE" 2>/dev/null |grep NEEDED) 2>/dev/null |grep -v ^NEEDED$ |sed 's/-3.9.1//g' |sed 's/\(.*\)/"\1",/g' |tr '\n' ' ')"
+                fi
                 printf '\t\t},\n'
             fi
             printf '\t},\n'
             if [ "$EXTRA" != "none" ]; then
                 printf '\tcompile_multilib: "%s",\n' "$EXTRA"
             fi
-            printf '\tcheck_elf_files: false,\n'
+            if [ ! -z "$DISABLE_CHECKELF" ]; then
+                printf '\tcheck_elf_files: false,\n'
+            fi
+        elif [ "$CLASS" = "RFSA" ]; then
+            printf 'prebuilt_rfsa {\n'
+            printf '\tname: "%s",\n' "$PKGNAME"
+            printf '\tfilename: "%s",\n' "$BASENAME"
+            printf '\towner: "%s",\n' "$VENDOR"
+            printf '\tsrc: "%s/lib/rfsa/%s",\n' "$SRC" "$FILE"
         elif [ "$CLASS" = "APEX" ]; then
             printf 'prebuilt_apex {\n'
             printf '\tname: "%s",\n' "$PKGNAME"
@@ -526,6 +558,11 @@ function write_blueprint_packages() {
             printf '\tsrc: "%s/etc/%s",\n' "$SRC" "$FILE"
             printf '\tfilename_from_src: true,\n'
         elif [ "$CLASS" = "EXECUTABLES" ]; then
+            if ! objdump -a "$ANDROID_ROOT"/"$OUTDIR"/"$SRC"/bin/"$FILE" 2>/dev/null |grep -c 'file format elf' > /dev/null; then
+                # This is not an elf file, assume it's a shell script that doesn't have an extension
+                # Setting extension here does not change the target extension, only the module type
+                EXTENSION="sh"
+            fi
             if [ "$EXTENSION" = "sh" ]; then
                 printf 'sh_binary {\n'
             else
@@ -534,16 +571,34 @@ function write_blueprint_packages() {
             printf '\tname: "%s",\n' "$PKGNAME"
             printf '\towner: "%s",\n' "$VENDOR"
             if [ "$EXTENSION" != "sh" ]; then
-                printf '\tsrcs: ["%s/bin/%s"],\n' "$SRC" "$FILE"
-                printf '\tcheck_elf_files: false,\n'
+                printf '\ttarget: {\n'
+                if objdump -a "$ANDROID_ROOT"/"$OUTDIR"/"$SRC"/bin/"$FILE" |grep -c 'file format elf64' > /dev/null; then
+                    printf '\t\tandroid_arm64: {\n'
+                else
+                    printf '\t\tandroid_arm: {\n'
+                fi
+                printf '\t\t\tsrcs: ["%s/bin/%s"],\n' "$SRC" "$FILE"
+                if [ -z "$DISABLE_CHECKELF" ]; then
+                    printf '\t\t\tshared_libs: [%s],\n' "$(basename -s .so $(${OBJDUMP} -x "$ANDROID_ROOT"/"$OUTDIR"/"$SRC"/bin/"$FILE" 2>/dev/null |grep NEEDED) 2>/dev/null |grep -v ^NEEDED$ |sed 's/-3.9.1//g' |sed 's/\(.*\)/"\1",/g' |tr '\n' ' ')"
+                fi
+                printf '\t\t},\n'
+                printf '\t},\n'
+                if objdump -a "$ANDROID_ROOT"/"$OUTDIR"/"$SRC"/bin/"$FILE" |grep -c 'file format elf64' > /dev/null; then
+                    printf '\tcompile_multilib: "%s",\n' "64"
+                else
+                    printf '\tcompile_multilib: "%s",\n' "32"
+                fi
+                if [ ! -z "$DISABLE_CHECKELF" ]; then
+                    printf '\tcheck_elf_files: false,\n'
+                fi
                 printf '\tstrip: {\n'
                 printf '\t\tnone: true,\n'
                 printf '\t},\n'
                 printf '\tprefer: true,\n'
             else
                 printf '\tsrc: "%s/bin/%s",\n' "$SRC" "$FILE"
+                printf '\tfilename: "%s",\n' "$BASENAME"
             fi
-            unset EXTENSION
         else
             printf '\tsrcs: ["%s/%s"],\n' "$SRC" "$FILE"
         fi
@@ -552,9 +607,13 @@ function write_blueprint_packages() {
             printf '\t\tenabled: false,\n'
             printf '\t},\n'
         fi
-        if [ "$CLASS" = "SHARED_LIBRARIES" ] || [ "$CLASS" = "EXECUTABLES" ] ; then
+        if [ "$CLASS" = "SHARED_LIBRARIES" ] || [ "$CLASS" = "EXECUTABLES" ] || [ "$CLASS" = "RFSA" ] ; then
             if [ "$DIRNAME" != "." ]; then
-                printf '\trelative_install_path: "%s",\n' "$DIRNAME"
+                if [ "$EXTENSION" = "sh" ]; then
+                    printf '\tsub_dir: "%s",\n' "$DIRNAME"
+                else
+                    printf '\trelative_install_path: "%s",\n' "$DIRNAME"
+                fi
             fi
         fi
         if [ "$CLASS" = "ETC" ] ; then
@@ -637,8 +696,10 @@ function write_product_packages() {
 
     local T_V_LIB32=( $(prefix_match "vendor/lib/") )
     local T_V_LIB64=( $(prefix_match "vendor/lib64/") )
+    local V_RFSA=( $(prefix_match "vendor/lib/rfsa/") )
     local V_MULTILIBS=( $(LC_ALL=C comm -12 <(printf '%s\n' "${T_V_LIB32[@]}") <(printf '%s\n' "${T_V_LIB64[@]}")) )
     local V_LIB32=( $(LC_ALL=C comm -23 <(printf '%s\n' "${T_V_LIB32[@]}") <(printf '%s\n' "${V_MULTILIBS[@]}")) )
+    local V_LIB32=( $(LC_ALL=C grep -v 'rfsa/' <(printf '%s\n' "${V_LIB32[@]}")) )
     local V_LIB64=( $(LC_ALL=C comm -23 <(printf '%s\n' "${T_V_LIB64[@]}") <(printf '%s\n' "${V_MULTILIBS[@]}")) )
 
     if [ "${#V_MULTILIBS[@]}" -gt "0" ]; then
@@ -649,6 +710,9 @@ function write_product_packages() {
     fi
     if [ "${#V_LIB64[@]}" -gt "0" ]; then
         write_blueprint_packages "SHARED_LIBRARIES" "vendor" "64" "V_LIB64" >> "$ANDROIDBP"
+    fi
+    if [ "${#V_RFSA[@]}" -gt "0" ]; then
+        write_blueprint_packages "RFSA" "vendor" "" "V_RFSA" >> "$ANDROIDBP"
     fi
 
     local T_P_LIB32=( $(prefix_match "product/lib/") )
@@ -1116,6 +1180,18 @@ EOF
 
     cat << EOF >> "$ANDROIDBP"
 soong_namespace {
+	imports: [
+EOF
+
+    if [ ! -z "$DEVICE_COMMON" -a "$COMMON" -ne 1 ]; then
+        cat << EOF >> "$ANDROIDBP"
+		"vendor/${VENDOR_COMMON:-$VENDOR}/$DEVICE_COMMON",
+EOF
+    fi
+    vendor_imports "$ANDROIDBP"
+
+    cat << EOF >> "$ANDROIDBP"
+	],
 }
 
 EOF
@@ -1217,6 +1293,10 @@ function parse_file_list() {
         elif suffix_match_file ".apex" "$(src_file "$SPEC")" || \
              suffix_match_file ".apk" "$(src_file "$SPEC")" || \
              suffix_match_file ".jar" "$(src_file "$SPEC")" || \
+             [[ "$TARGET_ENABLE_CHECKELF" == "true" && \
+                ( "${SPEC%%;*}" == *".so" || \
+                  "$SPEC" == *"bin/"* || \
+                  "$SPEC" == *"lib/rfsa"* ) ]] || \
              [[ "$SPEC" == *"etc/vintf/manifest/"* ]]; then
             PRODUCT_PACKAGES_LIST+=("$SPEC")
             PRODUCT_PACKAGES_HASHES+=("$HASH")
@@ -1528,6 +1608,14 @@ function print_spec() {
 #   $2: path to blob file. Can be used for fixups.
 #
 function blob_fixup() {
+    :
+}
+
+# To be overridden by device-level extract-files.sh
+# Parameters:
+#   $1: Path to vendor Android.bp
+#
+function vendor_imports() {
     :
 }
 
@@ -1971,6 +2059,10 @@ function extract_firmware() {
                 COPY_FILE="$SRC/$SRC_FILE"
             elif [ -f "$SRC/$DST_FILE" ]; then
                 COPY_FILE="$SRC/$DST_FILE"
+            fi
+            if [[ $(file -b "$COPY_FILE") == Android* ]]; then
+                "$SIMG2IMG" "$COPY_FILE" "$SRC"/"$(basename "$COPY_FILE").raw"
+                COPY_FILE="$SRC"/"$(basename "$COPY_FILE").raw"
             fi
         fi
 
