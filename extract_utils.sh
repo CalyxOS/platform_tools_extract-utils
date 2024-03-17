@@ -18,6 +18,7 @@ EXTRACT_SRC=
 EXTRACT_STATE=-1
 VENDOR_STATE=-1
 VENDOR_RADIO_STATE=-1
+VENDOR_FACTORY_STATE=-1
 COMMON=-1
 ARCHES=
 FULLY_DEODEXED=-1
@@ -134,9 +135,11 @@ function setup_vendor() {
     if [ "$5" == "false" ] || [ "$5" == "0" ]; then
         VENDOR_STATE=1
         VENDOR_RADIO_STATE=1
+        VENDOR_FACTORY_STATE=1
     else
         VENDOR_STATE=0
         VENDOR_RADIO_STATE=0
+        VENDOR_FACTORY_STATE=0
     fi
 
     setup_vendor_deps "$ANDROID_ROOT"
@@ -2199,6 +2202,62 @@ function extract_img_data() {
         echo "[!] You might not have a compatible debugfs version"
         abort 1
     fi
+}
+
+#
+# extract_factory:
+#
+# $1: file containing the list of items to extract
+# $2: path to extracted factory folder
+#
+function extract_factory() {
+    if [ -z "$OUTDIR" ]; then
+        echo "Output dir not set!"
+        exit 1
+    fi
+
+    parse_file_list "$1"
+
+    # Don't allow failing
+    set -e
+
+    local FILELIST=( ${PRODUCT_COPY_FILES_LIST[@]} )
+    local COUNT=${#FILELIST[@]}
+    local SRC="$2"
+    local OUTPUT_DIR="$ANDROID_ROOT"/"$OUTDIR"/factory
+
+    if [ "$VENDOR_FACTORY_STATE" -eq "0" ]; then
+        echo "Cleaning factory output directory ($OUTPUT_DIR).."
+        rm -rf "${OUTPUT_DIR:?}/"*
+        VENDOR_FACTORY_STATE=1
+    fi
+
+    echo "Extracting $COUNT files in $1 from $SRC:"
+
+    for (( i=1; i<COUNT+1; i++ )); do
+        local SRC_FILE=$(src_file "${FILELIST[$i-1]}")
+        local DST_FILE=$(target_file "${FILELIST[$i-1]}")
+        local COPY_FILE=
+
+        printf '  - %s \n' "factory/$DST_FILE"
+
+        if [ ! -d "$OUTPUT_DIR" ]; then
+            mkdir -p "$OUTPUT_DIR"
+        fi
+
+        if [ -f "$SRC/$SRC_FILE" ]; then
+            COPY_FILE="$SRC/$SRC_FILE"
+        elif [ -f "$SRC/$DST_FILE" ]; then
+            COPY_FILE="$SRC/$DST_FILE"
+        fi
+
+        if [ -f "$COPY_FILE" ]; then
+            cp "$COPY_FILE" "$OUTPUT_DIR/$DST_FILE"
+            chmod 644 "$OUTPUT_DIR/$DST_FILE"
+        else
+            colored_echo yellow "${DST_FILE} not found, skipping copy"
+        fi
+    done
 }
 
 function array_contains() {
