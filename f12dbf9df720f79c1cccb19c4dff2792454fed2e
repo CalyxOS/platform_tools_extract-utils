@@ -1,0 +1,21 @@
+{
+  "comments": [
+    {
+      "unresolved": true,
+      "key": {
+        "uuid": "baab48f8_8a8d7e09",
+        "filename": "extract_utils.sh",
+        "patchSetId": 1
+      },
+      "lineNbr": 1913,
+      "author": {
+        "id": 1000108
+      },
+      "writtenOn": "2024-04-02T18:22:06Z",
+      "side": 1,
+      "message": "Let me double check, this change looks like it should not be here.",
+      "revId": "f12dbf9df720f79c1cccb19c4dff2792454fed2e",
+      "serverId": "35266860-6252-469c-a67d-185064479fc0"
+    }
+  ]
+}
