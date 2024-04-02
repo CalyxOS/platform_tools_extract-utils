@@ -1,0 +1,21 @@
+{
+  "comments": [
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "78706d8e_540b79f4",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 2
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000108
+      },
+      "writtenOn": "2024-04-02T18:32:35Z",
+      "side": 1,
+      "message": "Removed unnecessary change to OUTPUT variables.",
+      "revId": "23ea5c829f9cadd3657ed3f4720ec04f29e6f456",
+      "serverId": "35266860-6252-469c-a67d-185064479fc0"
+    }
+  ]
+}
