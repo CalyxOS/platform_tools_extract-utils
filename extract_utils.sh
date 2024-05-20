@@ -1476,6 +1476,35 @@ function append_firmware_calls_to_makefiles() {
 }
 
 #
+# append_factory_calls_to_makefiles:
+#
+# $1: file containing the list of items to extract
+#
+# Appends the calls to all images present in factory folder to Android.mk
+#
+function append_factory_calls_to_makefiles() {
+    parse_file_list "$1"
+
+    local FILELIST=(${PRODUCT_COPY_FILES_LIST[@]})
+    local COUNT=${#FILELIST[@]}
+
+    for (( i=1; i<COUNT+1; i++ )); do
+        local DST_FILE=$(target_file "${FILELIST[$i-1]}")
+        local ARGS=$(target_args "${FILELIST[$i-1]}")
+        local SHA1=$(get_hash "$ANDROID_ROOT"/"$OUTDIR"/factory/"$DST_FILE")
+        DST_FILE_NAME=(${DST_FILE//.img/ })
+        ARGS=(${ARGS//;/ })
+        LINEEND=" \\"
+        if [ "$i" -eq "$COUNT" ]; then
+            LINEEND=""
+        fi
+
+        printf '%s\n' "\$(call add-radio-file-sha1-checked,factory/$DST_FILE,$SHA1)" >> "$ANDROIDMK"
+    done
+    printf '\n' >> "$ANDROIDMK"
+}
+
+#
 # get_file:
 #
 # $1: input file
