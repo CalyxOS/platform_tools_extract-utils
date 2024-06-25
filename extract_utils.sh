@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Copyright (C) 2016 The CyanogenMod Project
-# Copyright (C) 2017-2023 The LineageOS Project
+# Copyright (C) 2017-2024 The LineageOS Project
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -953,11 +953,11 @@ function write_symlink_packages() {
     fi
 
     for LINE in "${PRODUCT_SYMLINKS_LIST[@]}"; do
-        FILE=$(src_file "$LINE")
-        if [[ "$LINE" =~ '/lib/' ]]; then
-            ARCH="32"
-        elif [[ "$LINE" =~ '/lib64/' ]]; then
+        FILE=$(target_file "$LINE")
+        if [[ "$LINE" =~ '/lib64/' || "$LINE" =~ '/lib/arm64/' ]]; then
             ARCH="64"
+        elif [[ "$LINE" =~ '/lib/' ]]; then
+            ARCH="32"
         fi
         BASENAME=$(basename "$FILE")
         ARGS=$(target_args "$LINE")
@@ -972,16 +972,16 @@ function write_symlink_packages() {
                     {
                         printf 'install_symlink {\n'
                         printf '\tname: "%s",\n' "$PKGNAME"
-                        if prefix_match_file "vendor/" "$FILE"; then
+                        if prefix_match_file "vendor/" "$SYMLINK"; then
                             PREFIX='vendor/'
                             printf '\tsoc_specific: true,\n'
-                        elif prefix_match_file "product/" "$FILE"; then
+                        elif prefix_match_file "product/" "$SYMLINK"; then
                             PREFIX='product/'
                             printf '\tproduct_specific: true,\n'
-                        elif prefix_match_file "system_ext/" "$FILE"; then
+                        elif prefix_match_file "system_ext/" "$SYMLINK"; then
                             PREFIX='system_ext/'
                             printf '\tsystem_ext_specific: true,\n'
-                        elif prefix_match_file "odm/" "$FILE"; then
+                        elif prefix_match_file "odm/" "$SYMLINK"; then
                             PREFIX='odm/'
                             printf '\tdevice_specific: true,\n'
                         fi
