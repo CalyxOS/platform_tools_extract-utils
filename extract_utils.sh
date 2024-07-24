@@ -968,7 +968,10 @@ function write_symlink_packages() {
                 SYMLINKS=(${SYMLINKS//,/ })
                 for SYMLINK in "${SYMLINKS[@]}"; do
                     SYMLINK_BASENAME=$(basename "$SYMLINK")
-                    PKGNAME=${BASENAME%.*}_${SYMLINK_BASENAME%.*}_symlink${ARCH}
+                    PKGNAME="${BASENAME%.*}_${SYMLINK_BASENAME%.*}_symlink${ARCH}"
+                    if [[ "${SYMLINK_PACKAGES[@]}" =~ "$PKGNAME" ]]; then
+                        PKGNAME+="_$(grep -o "$PKGNAME" <<< ${SYMLINK_PACKAGES[*]} | wc -l)"
+                    fi
                     {
                         printf 'install_symlink {\n'
                         printf '\tname: "%s",\n' "$PKGNAME"
@@ -1526,12 +1529,12 @@ function get_file() {
         return 1
     else
         # try to copy
-        cp -r "$SRC/$1"           "$2" 2>/dev/null && return 0
-        cp -r "$SRC/${1#/system}" "$2" 2>/dev/null && return 0
-        cp -r "$SRC/system/$1"    "$2" 2>/dev/null && return 0
+        cp -Lr "$SRC/$1"           "$2" 2>/dev/null && return 0
+        cp -Lr "$SRC/${1#/system}" "$2" 2>/dev/null && return 0
+        cp -Lr "$SRC/system/$1"    "$2" 2>/dev/null && return 0
 
         # try /vendor/odm for devices without /odm partition
-        [[ "$1" == /system/odm/* ]] && cp -r "$SRC/vendor/${1#/system}" "$2" 2>/dev/null && return 0
+        [[ "$1" == /system/odm/* ]] && cp -Lr "$SRC/vendor/${1#/system}" "$2" 2>/dev/null && return 0
 
         return 1
     fi
