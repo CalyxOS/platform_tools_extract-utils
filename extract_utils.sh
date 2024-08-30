@@ -22,6 +22,7 @@ REQUIRED_PACKAGES_LIST=
 EXTRACT_SRC=
 EXTRACT_STATE=-1
 EXTRACT_RADIO_STATE=-1
+EXTRACT_FACTORY_STATE=-1
 VENDOR_STATE=-1
 VENDOR_RADIO_STATE=-1
 VENDOR_FACTORY_STATE=-1
@@ -1491,23 +1492,22 @@ function get_file_helper() {
 function append_factory_calls_to_makefiles() {
     parse_file_list "$1"
 
-    local FILELIST=(${PRODUCT_COPY_FILES_LIST[@]})
-    local COUNT=${#FILELIST[@]}
+    local DEST_LIST=("${PRODUCT_COPY_FILES_DEST[@]}")
+    local ARGS_LIST=("${PRODUCT_COPY_FILES_ARGS[@]}")
+    local COUNT=${#DEST_LIST[@]}
 
-    for (( i=1; i<COUNT+1; i++ )); do
-        local DST_FILE=$(target_file "${FILELIST[$i-1]}")
-        local ARGS=$(target_args "${FILELIST[$i-1]}")
+    for ((i = 1; i < COUNT + 1; i++)); do
+        local DST_FILE="${DEST_LIST[$i - 1]}"
         local SHA1=$(get_hash "$ANDROID_ROOT"/"$OUTDIR"/factory/"$DST_FILE")
-        DST_FILE_NAME=(${DST_FILE//.img/ })
-        ARGS=(${ARGS//;/ })
+        local DST_FILE_NAME="${DST_FILE%.img}"
         LINEEND=" \\"
         if [ "$i" -eq "$COUNT" ]; then
             LINEEND=""
         fi
 
-        printf '%s\n' "\$(call add-radio-file-sha1-checked,factory/$DST_FILE,$SHA1)" >> "$ANDROIDMK"
+        printf '%s\n' "\$(call add-radio-file-sha1-checked,factory/$DST_FILE,$SHA1)" >>"$ANDROIDMK"
     done
-    printf '\n' >> "$ANDROIDMK"
+    printf '\n' >>"$ANDROIDMK"
 }
 
 #
@@ -2344,8 +2344,9 @@ function extract_factory() {
     # Don't allow failing
     set -e
 
-    local FILELIST=( ${PRODUCT_COPY_FILES_LIST[@]} )
-    local COUNT=${#FILELIST[@]}
+    local SRC_LIST=("${PRODUCT_COPY_FILES_SRC[@]}")
+    local DEST_LIST=("${PRODUCT_COPY_FILES_DEST[@]}")
+    local COUNT=${#SRC_LIST[@]}
     local SRC="$2"
     local OUTPUT_DIR="$ANDROID_ROOT"/"$OUTDIR"/factory
 
@@ -2355,11 +2356,26 @@ function extract_factory() {
         VENDOR_FACTORY_STATE=1
     fi
 
+    if [ -d "$SRC"/radio ]; then
+        EXTRACT_FACTORY_STATE=1
+    fi
+
     echo "Extracting $COUNT files in $1 from $SRC:"
 
-    for (( i=1; i<COUNT+1; i++ )); do
-        local SRC_FILE=$(src_file "${FILELIST[$i-1]}")
-        local DST_FILE=$(target_file "${FILELIST[$i-1]}")
+    if [ "$EXTRACT_STATE" -ne "1" ]; then
+        prepare_images "$SRC"
+    fi
+
+    if [ "$EXTRACT_FACTORY_STATE" -ne "1" ]; then
+        if [ "$KEEP_DUMP" == "true" ] || [ "$KEEP_DUMP" == "1" ]; then
+            rm -rf "$KEEP_DUMP_DIR"/factory
+            mkdir "$KEEP_DUMP_DIR"/factory
+        fi
+    fi
+
+    for ((i = 1; i < COUNT + 1; i++)); do
+        local SRC_FILE="${SRC_LIST[$i - 1]}"
+        local DST_FILE="${DEST_LIST[$i - 1]}"
         local COPY_FILE=
 
         printf '  - %s \n' "factory/$DST_FILE"
@@ -2370,6 +2386,8 @@ function extract_factory() {
 
         if [ -f "$SRC/$SRC_FILE" ]; then
             COPY_FILE="$SRC/$SRC_FILE"
+        elif [ -f "$SRC/factory/$SRC_FILE" ]; then
+            COPY_FILE="$SRC/factory/$SRC_FILE"
         elif [ -f "$SRC/$DST_FILE" ]; then
             COPY_FILE="$SRC/$DST_FILE"
         fi
@@ -2377,6 +2395,9 @@ function extract_factory() {
         if [ -f "$COPY_FILE" ]; then
             cp "$COPY_FILE" "$OUTPUT_DIR/$DST_FILE"
             chmod 644 "$OUTPUT_DIR/$DST_FILE"
+            if [ "$KEEP_DUMP" == "true" ] || [ "$KEEP_DUMP" == "1" ]; then
+                cp "$OUTPUT_DIR/$DST_FILE" "$KEEP_DUMP_DIR"/factory/
+            fi
         else
             colored_echo yellow "${DST_FILE} not found, skipping copy"
         fi
