@@ -1,0 +1,21 @@
+{
+  "comments": [
+    {
+      "unresolved": true,
+      "key": {
+        "uuid": "4bc157a9_e132233c",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000000
+      },
+      "writtenOn": "2024-08-30T11:54:36Z",
+      "side": 1,
+      "message": "TODO: Quick check to make sure existing non-updated Pixel blobs are fine, don\u0027t want to have yet another ASB run into vendor issues 😭",
+      "revId": "a5fe2a10ab4b8f6c7fc87d212f7a7629b918fbc3",
+      "serverId": "35266860-6252-469c-a67d-185064479fc0"
+    }
+  ]
+}
