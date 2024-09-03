@@ -1,0 +1,21 @@
+{
+  "comments": [
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "ea0e3e9e_76ab58cf",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000004
+      },
+      "writtenOn": "2024-09-03T02:20:40Z",
+      "side": 1,
+      "message": "Needed to fix extract",
+      "revId": "7cd3d1d7f6d78d8b0ab1454b0702f5ac9c48e83c",
+      "serverId": "35266860-6252-469c-a67d-185064479fc0"
+    }
+  ]
+}
