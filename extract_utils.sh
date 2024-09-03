@@ -2356,7 +2356,7 @@ function extract_factory() {
         VENDOR_FACTORY_STATE=1
     fi
 
-    if [ -d "$SRC"/radio ]; then
+    if [ -d "$SRC"/factory ]; then
         EXTRACT_FACTORY_STATE=1
     fi
 
