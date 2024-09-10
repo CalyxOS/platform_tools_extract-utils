@@ -544,6 +544,10 @@ function write_blueprint_packages() {
             EXTENSION=""
         fi
 
+        if [ "$CLASS" = "ETC" ] && [ "$EXTENSION" = "xml" ]; then
+            PKGNAME="$BASENAME"
+        fi
+
         # Allow overriding module name
         STEM=
         if [ "$TARGET_ENABLE_CHECKELF" == "true" ]; then
@@ -553,11 +557,17 @@ function write_blueprint_packages() {
             DISABLE_CHECKELF="true"
         fi
         for ARG in "${ARGS[@]}"; do
-            if [[ "$ARG" =~ "MODULE" ]]; then
+            if [[ "$ARG" =~ "MODULE_SUFFIX" ]]; then
+                STEM="$PKGNAME"
+                PKGNAME+=${ARG#*=}
+            elif [[ "$ARG" =~ "MODULE" ]]; then
                 STEM="$PKGNAME"
                 PKGNAME=${ARG#*=}
             elif [[ "$ARG" == "DISABLE_CHECKELF" ]]; then
                 DISABLE_CHECKELF="true"
+            elif [[ "$ARG" == "DISABLE_DEPS" ]]; then
+                DISABLE_CHECKELF="true"
+                GENERATE_DEPS=
             fi
         done
 
@@ -576,7 +586,7 @@ function write_blueprint_packages() {
             printf '\t},\n'
             printf '\ttarget: {\n'
             if [ "$EXTRA" = "both" ] || [ "$EXTRA" = "32" ]; then
-                printf '\t\tandroid_arm: {\n'
+                printf '\t\t%s: {\n' $(elf_format_android "$ANDROID_ROOT/$OUTDIR/$SRC/lib/$FILE")
                 printf '\t\t\tsrcs: ["%s/lib/%s"],\n' "$SRC" "$FILE"
                 if [ -n "$GENERATE_DEPS" ]; then
                     write_package_shared_libs "$SRC" "lib" "$FILE" "$PARTITION"
@@ -585,7 +595,7 @@ function write_blueprint_packages() {
             fi
 
             if [ "$EXTRA" = "both" ] || [ "$EXTRA" = "64" ]; then
-                printf '\t\tandroid_arm64: {\n'
+                printf '\t\t%s: {\n' $(elf_format_android "$ANDROID_ROOT/$OUTDIR/$SRC/lib64/$FILE")
                 printf '\t\t\tsrcs: ["%s/lib64/%s"],\n' "$SRC" "$FILE"
                 if [ -n "$GENERATE_DEPS" ]; then
                     write_package_shared_libs "$SRC" "lib64" "$FILE" "$PARTITION"
@@ -655,7 +665,7 @@ function write_blueprint_packages() {
             printf '\tfilename_from_src: true,\n'
         elif [ "$CLASS" = "EXECUTABLES" ]; then
             local FILE_PATH="$ANDROID_ROOT/$OUTDIR/$SRC/$FILE"
-            local ELF_FORMAT=$("$OBJDUMP" -a "$FILE_PATH" 2>/dev/null | sed -nE "s|^.+file format elf(..).+$|\1|p")
+            local ELF_FORMAT=$(elf_format_android "$FILE_PATH")
             if [ "$ELF_FORMAT" = "" ]; then
                 # This is not an elf file, assume it's a shell script that doesn't have an extension
                 # Setting extension here does not change the target extension, only the module type
@@ -673,18 +683,14 @@ function write_blueprint_packages() {
             printf '\towner: "%s",\n' "$VENDOR"
             if [ "$EXTENSION" != "sh" ]; then
                 printf '\ttarget: {\n'
-                if [ "$ELF_FORMAT" = "64" ]; then
-                    printf '\t\tandroid_arm64: {\n'
-                else
-                    printf '\t\tandroid_arm: {\n'
-                fi
+                printf '\t\t%s: {\n' "$ELF_FORMAT"
                 printf '\t\t\tsrcs: ["%s/%s"],\n' "$SRC" "$FILE"
                 if [ -n "$GENERATE_DEPS" ]; then
                     write_package_shared_libs "$SRC" "" "$FILE" "$PARTITION"
                 fi
                 printf '\t\t},\n'
                 printf '\t},\n'
-                if [ "$ELF_FORMAT" = "64" ]; then
+                if [[ "$ELF_FORMAT" =~ "64" ]]; then
                     printf '\tcompile_multilib: "%s",\n' "64"
                 else
                     printf '\tcompile_multilib: "%s",\n' "32"
@@ -741,6 +747,19 @@ function write_blueprint_packages() {
 
 function do_comm() {
     LC_ALL=C comm "$1" <(echo "$2") <(echo "$3")
+}
+
+function elf_format_android() {
+    local ELF_FORMAT=$("$OBJDUMP" -a "$1" 2>/dev/null | sed -nE "s|^.+file format (.*)$|\1|p")
+    if [ "$ELF_FORMAT" = "elf64-littleaarch64" ]; then
+        echo "android_arm64"
+    elif [ "$ELF_FORMAT" = "elf32-littlearm" ] || [ "$ELF_FORMAT" = "elf32-hexagon" ]; then
+        echo "android_arm"
+    elif [ "$ELF_FORMAT" = "elf64-x86-64" ]; then
+        echo "android_x86_64"
+    elif [ "$ELF_FORMAT" = "elf32-i386" ]; then
+        echo "android_x86"
+    fi
 }
 
 #
@@ -821,13 +840,16 @@ function write_product_packages() {
 
     local T_O_LIB32=$(prefix_match "odm/lib/")
     local T_O_LIB64=$(prefix_match "odm/lib64/")
+    local O_RFSA=$(prefix_match "odm/lib/rfsa/")
     local O_MULTILIBS=$(do_comm -12 "$T_O_LIB32" "$T_O_LIB64")
     local O_LIB32=$(do_comm -23 "$T_O_LIB32" "$O_MULTILIBS")
+    local O_LIB32=$(grep -v 'rfsa/' <(echo "$O_LIB32"))
     local O_LIB64=$(do_comm -23 "$T_O_LIB64" "$O_MULTILIBS")
     {
         write_blueprint_packages "SHARED_LIBRARIES" "odm" "both" "$O_MULTILIBS"
         write_blueprint_packages "SHARED_LIBRARIES" "odm" "32" "$O_LIB32"
         write_blueprint_packages "SHARED_LIBRARIES" "odm" "64" "$O_LIB64"
+        write_blueprint_packages "RFSA" "odm" "" "$O_RFSA"
     } >>"$ANDROIDBP"
 
     # APEX
@@ -1381,7 +1403,8 @@ function parse_file_list() {
             suffix_match_file ".apk" "$SRC_FILE" ||
             suffix_match_file ".jar" "$SRC_FILE" ||
             [[ "$TARGET_ENABLE_CHECKELF" == "true" &&
-                ("$SRC_FILE" == *".so" ||
+                ("$SRC_FILE" == *"lib/"*".so" ||
+                "$SRC_FILE" == *"lib64/"*".so" ||
                 "$SRC_FILE" == *"bin/"* ||
                 "$SRC_FILE" == *"lib/rfsa"*) ]] ||
             [[ "$SRC_FILE" == *"etc/vintf/manifest/"* ]]; then
@@ -1692,6 +1715,17 @@ function init_adb_connection() {
     fi
     adb wait-for-device &>/dev/null
     sleep 0.3
+}
+
+#
+# fix_soname:
+#
+# $1: so file to fix
+#
+function fix_soname() {
+    local SO="$1"
+
+    "${PATCHELF}" --set-soname $(basename "$SO") "$SO"
 }
 
 #
@@ -2041,6 +2075,7 @@ function extract() {
         local SPEC_SRC_FILE="${SRC_LIST[$i - 1]}"
         local SPEC_DST_FILE="${DEST_LIST[$i - 1]}"
         local SPEC_ARGS="${ARGS_LIST[$i - 1]}"
+        local ARGS=(${SPEC_ARGS//;/ })
         local OUTPUT_DIR=
         local TMP_DIR=
         local SRC_FILE=
@@ -2132,6 +2167,16 @@ function extract() {
             elif [ "$KANG" = true ]; then
                 PRE_FIXUP_HASH=$(get_hash "$VENDOR_REPO_FILE")
             fi
+
+            for ARG in "${ARGS[@]}"; do
+                if [[ "$ARG" == "FIX_SONAME" ]]; then
+                    PRE_FIXUP_HASH=$(get_hash "$VENDOR_REPO_FILE")
+                    fix_soname "${VENDOR_REPO_FILE}"
+                elif [[ "$ARG" == "FIX_XML" ]]; then
+                    PRE_FIXUP_HASH=$(get_hash "$VENDOR_REPO_FILE")
+                    fix_xml "${VENDOR_REPO_FILE}"
+                fi
+            done
 
             blob_fixup_dry "$BLOB_DISPLAY_NAME"
             if [ $? -ne 1 ]; then
@@ -2507,8 +2552,24 @@ function set_disable_checkelf() {
     sed -i "s|${1}$|${1};DISABLE_CHECKELF|g" "${2}"
 }
 
+function set_disable_deps() {
+    sed -i "s|${1}$|${1};DISABLE_DEPS|g" "${2}"
+}
+
+function set_fix_soname() {
+    sed -i "s|${1}$|${1};FIX_SONAME|g" "${2}"
+}
+
+function set_fix_xml() {
+    sed -i "s|${1}$|${1};FIX_XML|g" "${2}"
+}
+
 function set_module() {
     sed -i "s|${1}$|${1};MODULE=${2}|g" "${3}"
+}
+
+function set_module_suffix() {
+    sed -i "s|${1}$|${1};MODULE_SUFFIX=${2}|g" "${3}"
 }
 
 function set_presigned() {
