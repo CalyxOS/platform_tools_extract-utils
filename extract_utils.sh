@@ -1,8 +1,7 @@
 #!/bin/bash
 #
-# Copyright (C) 2016 The CyanogenMod Project
-# Copyright (C) 2017-2024 The LineageOS Project
-#
+# SPDX-FileCopyrightText: 2016 The CyanogenMod Project
+# SPDX-FileCopyrightText: 2017-2024 The LineageOS Project
 # SPDX-License-Identifier: Apache-2.0
 #
 
@@ -240,11 +239,23 @@ function prefix_match() {
     for ((i = 1; i < COUNT + 1; i++)); do
         local FILE="${DEST_LIST[$i - 1]}"
         if [[ "$FILE" =~ ^"$PREFIX" ]]; then
-            local ARGS="${ARGS_LIST[$i - 1]}"
-            if [[ -z "${ARGS}" || "${ARGS}" =~ 'SYMLINK' ]]; then
+            local SPEC_ARGS="${ARGS_LIST[$i - 1]}"
+            local ARGS=(${SPEC_ARGS//;/ })
+            local FILTERED_ARGS=()
+
+            for ARG in "${ARGS[@]}"; do
+                if [[ "$ARG" =~ ^SYMLINK= ]]; then
+                    continue
+                fi
+                FILTERED_ARGS+=("$ARG")
+            done
+
+            FILTERED_ARGS=$(IFS=";" echo "${FILTERED_ARGS[@]}")
+
+            if [ -z "$FILTERED_ARGS" ]; then
                 NEW_ARRAY+=("${FILE#"$PREFIX"}")
             else
-                NEW_ARRAY+=("${FILE#"$PREFIX"};${ARGS}")
+                NEW_ARRAY+=("${FILE#"$PREFIX"};${FILTERED_ARGS}")
             fi
         fi
     done
@@ -539,7 +550,7 @@ function write_blueprint_packages() {
         EXTENSION=${BASENAME##*.}
         PKGNAME=${BASENAME%.*}
 
-        if [ "$CLASS" = "EXECUTABLES" ] && [ "$EXTENSION" != "sh" ]; then
+        if ([ "$CLASS" = "EXECUTABLES" ] && [ "$EXTENSION" != "sh" ]) || [ "$PKGNAME" = "" ]; then
             PKGNAME="$BASENAME"
             EXTENSION=""
         fi
@@ -550,7 +561,7 @@ function write_blueprint_packages() {
 
         # Allow overriding module name
         STEM=
-        if [ "$TARGET_ENABLE_CHECKELF" == "true" ]; then
+        if [ "$TARGET_ENABLE_CHECKELF" != "false" ]; then
             DISABLE_CHECKELF=
             GENERATE_DEPS="true"
         else
@@ -630,6 +641,8 @@ function write_blueprint_packages() {
                     USE_PLATFORM_CERTIFICATE="false"
                     printf '\tpreprocessed: true,\n'
                     printf '\tpresigned: true,\n'
+                elif [ "$ARG" = "SKIPAPKCHECKS" ]; then
+                    printf '\tskip_preprocessed_apk_checks: true,\n'
                 elif [[ "$ARG" =~ "OVERRIDES" ]]; then
                     OVERRIDEPKG=${ARG#*=}
                     OVERRIDEPKG=${OVERRIDEPKG//,/\", \"}
@@ -777,6 +790,10 @@ function write_product_packages() {
 
     if [ "$COUNT" = "0" ]; then
         return 0
+    fi
+
+    if [ "$TARGET_ENABLE_CHECKELF" == "false" ]; then
+        colored_echo yellow "WARNING: TARGET_ENABLE_CHECKELF = false is deprecated and will be removed in Android 16."
     fi
 
     # Figure out what's 32-bit, what's 64-bit, and what's multilib
@@ -1402,7 +1419,7 @@ function parse_file_list() {
         if suffix_match_file ".apex" "$SRC_FILE" ||
             suffix_match_file ".apk" "$SRC_FILE" ||
             suffix_match_file ".jar" "$SRC_FILE" ||
-            [[ "$TARGET_ENABLE_CHECKELF" == "true" &&
+            [[ "$TARGET_ENABLE_CHECKELF" != "false" &&
                 ("$SRC_FILE" == *"lib/"*".so" ||
                 "$SRC_FILE" == *"lib64/"*".so" ||
                 "$SRC_FILE" == *"bin/"* ||
@@ -2081,12 +2098,17 @@ function extract() {
         local SRC_FILE=
         local DST_FILE=
         local IS_PRODUCT_PACKAGE=false
+        local TRY_SRC_FILE_FIRST=false
 
         # Note: this relies on the fact that the ${SRC_LIST[@]} array
         # contains first ${PRODUCT_COPY_FILES_SRC[@]}, then ${PRODUCT_PACKAGES_SRC[@]}.
         if [ "${i}" -gt "${PRODUCT_COPY_FILES_COUNT}" ]; then
             IS_PRODUCT_PACKAGE=true
         fi
+
+        for arg in "${ARGS[@]}"; do
+            [ "${arg}" = "TRYSRCFIRST" ] && TRY_SRC_FILE_FIRST=true
+        done
 
         OUTPUT_DIR="${OUTPUT_ROOT}"
         TMP_DIR="${OUTPUT_TMP}"
@@ -2103,7 +2125,7 @@ function extract() {
         # Check pinned files
         local HASH="${HASHLIST[$i - 1]}"
         local FIXUP_HASH="${FIXUP_HASHLIST[$i - 1]}"
-        local KEEP=""
+        local USE_PINNED="no"
         if [ "$DISABLE_PINNING" != "1" ] && [ -n "$HASH" ]; then
             if [ -f "${VENDOR_REPO_FILE}" ]; then
                 local PINNED="${VENDOR_REPO_FILE}"
@@ -2113,9 +2135,13 @@ function extract() {
             if [ -f "$PINNED" ]; then
                 local TMP_HASH=$(get_hash "${PINNED}")
                 if [ "${TMP_HASH}" = "${HASH}" ] || [ "${TMP_HASH}" = "${FIXUP_HASH}" ]; then
-                    KEEP="1"
                     if [ ! -f "${VENDOR_REPO_FILE}" ]; then
                         cp -p "$PINNED" "${VENDOR_REPO_FILE}"
+                    fi
+                    if [ -z "${FIXUP_HASH}" ] || [ "${TMP_HASH}" = "${FIXUP_HASH}" ]; then
+                        USE_PINNED="yes"
+                    else
+                        USE_PINNED="fixup"
                     fi
                 fi
             fi
@@ -2125,87 +2151,110 @@ function extract() {
             printf '  - %s\n' "${BLOB_DISPLAY_NAME}"
         fi
 
-        if [ "$KEEP" = "1" ]; then
-            if [ -n "${FIXUP_HASH}" ]; then
-                printf '    + Keeping pinned file with hash %s\n' "${FIXUP_HASH}"
-            else
-                printf '    + Keeping pinned file with hash %s\n' "${HASH}"
-            fi
-        else
-            local FOUND=false
-            # Try custom target first.
-            for CANDIDATE in "${DST_FILE}" "${SRC_FILE}"; do
-                get_file "${CANDIDATE}" "${VENDOR_REPO_FILE}" "${EXTRACT_SRC}" && {
-                    FOUND=true
-                    break
-                }
-            done
-
-            if [ "${FOUND}" = false ]; then
-                colored_echo red "    !! ${BLOB_DISPLAY_NAME}: file not found in source"
-                continue
-            fi
-
-            # Blob fixup pipeline has 2 parts: one that is fixed and
-            # one that is user-configurable
-            local PRE_FIXUP_HASH=
-            local POST_FIXUP_HASH=
-
-            # Deodex apk|jar if that's the case
-            if [[ "$FULLY_DEODEXED" -ne "1" && "${VENDOR_REPO_FILE}" =~ .(apk|jar)$ ]]; then
-                PRE_FIXUP_HASH=$(get_hash "$VENDOR_REPO_FILE")
-                oat2dex "${VENDOR_REPO_FILE}" "${SRC_FILE}" "$EXTRACT_SRC"
-                if [ -f "$EXTRACT_TMP_DIR/classes.dex" ]; then
-                    touch -t 200901010000 "$EXTRACT_TMP_DIR/classes"*
-                    zip -gjq "${VENDOR_REPO_FILE}" "$EXTRACT_TMP_DIR/classes"*
-                    rm "$EXTRACT_TMP_DIR/classes"*
-                    printf '    (updated %s from odex files)\n' "${SRC_FILE}"
+        case "$USE_PINNED" in
+            yes)
+                if [ -n "${FIXUP_HASH}" ]; then
+                    printf '    + Keeping pinned file with hash %s\n' "${FIXUP_HASH}"
+                else
+                    printf '    + Keeping pinned file with hash %s\n' "${HASH}"
                 fi
-            elif [[ "$TARGET_DISABLE_XML_FIXING" != true && "${VENDOR_REPO_FILE}" =~ .xml$ ]]; then
+                continue
+                ;;
+            fixup)
+                printf '    + Fixing up pinned file with hash %s\n' "${HASH}"
+                ;;
+            *)
+                local FOUND=false
+                local FIRST_CANDIDATE=
+                local SECOND_CANDIDATE=
+                if $TRY_SRC_FILE_FIRST; then
+                    FIRST_CANDIDATE="$SRC_FILE"
+                    SECOND_CANDIDATE="$DST_FILE"
+                else
+                    # Try custom target first by default.
+                    FIRST_CANDIDATE="$DST_FILE"
+                    SECOND_CANDIDATE="$SRC_FILE"
+                fi
+                for CANDIDATE in "${FIRST_CANDIDATE}" "${SECOND_CANDIDATE}"; do
+                    get_file "${CANDIDATE}" "${VENDOR_REPO_FILE}" "${EXTRACT_SRC}" && {
+                        FOUND=true
+                        break
+                    }
+                done
+
+                if [ "${FOUND}" = false ]; then
+                    colored_echo red "    !! ${BLOB_DISPLAY_NAME}: file not found in source"
+                    continue
+                fi
+                ;;
+        esac
+
+        # Blob fixup pipeline has 2 parts: one that is fixed and
+        # one that is user-configurable
+        local PRE_FIXUP_HASH=
+        local POST_FIXUP_HASH=
+
+        # Deodex apk|jar if that's the case
+        if [[ "$FULLY_DEODEXED" -ne "1" && "${VENDOR_REPO_FILE}" =~ .(apk|jar)$ ]]; then
+            PRE_FIXUP_HASH=$(get_hash "$VENDOR_REPO_FILE")
+            oat2dex "${VENDOR_REPO_FILE}" "${SRC_FILE}" "$EXTRACT_SRC"
+            if [ -f "$EXTRACT_TMP_DIR/classes.dex" ]; then
+                touch -t 200901010000 "$EXTRACT_TMP_DIR/classes"*
+                zip -gjq "${VENDOR_REPO_FILE}" "$EXTRACT_TMP_DIR/classes"*
+                rm "$EXTRACT_TMP_DIR/classes"*
+                printf '    (updated %s from odex files)\n' "${SRC_FILE}"
+            fi
+        elif [ "$KANG" = true ]; then
+            PRE_FIXUP_HASH=$(get_hash "$VENDOR_REPO_FILE")
+        fi
+
+        for ARG in "${ARGS[@]}"; do
+            if [[ "$ARG" == "FIX_SONAME" ]]; then
+                PRE_FIXUP_HASH=$(get_hash "$VENDOR_REPO_FILE")
+                fix_soname "${VENDOR_REPO_FILE}"
+            elif [[ "$ARG" == "FIX_XML" ]]; then
                 PRE_FIXUP_HASH=$(get_hash "$VENDOR_REPO_FILE")
                 fix_xml "${VENDOR_REPO_FILE}"
-            elif [ "$KANG" = true ]; then
+            fi
+        done
+
+        blob_fixup_dry "$BLOB_DISPLAY_NAME"
+        if [ $? -ne 1 ]; then
+            if [ -z "$PRE_FIXUP_HASH" ]; then
                 PRE_FIXUP_HASH=$(get_hash "$VENDOR_REPO_FILE")
             fi
 
-            for ARG in "${ARGS[@]}"; do
-                if [[ "$ARG" == "FIX_SONAME" ]]; then
-                    PRE_FIXUP_HASH=$(get_hash "$VENDOR_REPO_FILE")
-                    fix_soname "${VENDOR_REPO_FILE}"
-                elif [[ "$ARG" == "FIX_XML" ]]; then
-                    PRE_FIXUP_HASH=$(get_hash "$VENDOR_REPO_FILE")
-                    fix_xml "${VENDOR_REPO_FILE}"
-                fi
-            done
+            # Now run user-supplied fixup function
+            blob_fixup "$BLOB_DISPLAY_NAME" "$VENDOR_REPO_FILE"
+        fi
 
-            blob_fixup_dry "$BLOB_DISPLAY_NAME"
-            if [ $? -ne 1 ]; then
-                if [ -z "$PRE_FIXUP_HASH" ]; then
-                    PRE_FIXUP_HASH=$(get_hash "$VENDOR_REPO_FILE")
-                fi
+        if [ -n "$PRE_FIXUP_HASH" ]; then
+            POST_FIXUP_HASH=$(get_hash "$VENDOR_REPO_FILE")
+        fi
 
-                # Now run user-supplied fixup function
-                blob_fixup "$BLOB_DISPLAY_NAME" "$VENDOR_REPO_FILE"
+        if [ "${KANG}" = true ]; then
+            print_spec "${IS_PRODUCT_PACKAGE}" "${SPEC_SRC_FILE}" "${SPEC_DST_FILE}" "${SPEC_ARGS}" "${PRE_FIXUP_HASH}" "${POST_FIXUP_HASH}"
+        fi
+
+        # Check and print whether the fixup pipeline actually did anything.
+        # This isn't done right after the fixup pipeline because we want this print
+        # to come after print_spec above, when in kang mode.
+        if [ "${PRE_FIXUP_HASH}" != "${POST_FIXUP_HASH}" ]; then
+            printf "    + Fixed up %s\n" "${BLOB_DISPLAY_NAME}"
+            # Now sanity-check the spec for this blob.
+            if [ "${KANG}" = false ] && [ -z "${FIXUP_HASH}" ] && [ -n "${HASH}" ]; then
+                colored_echo yellow "WARNING: The ${BLOB_DISPLAY_NAME} file was fixed up, but it is pinned."
+                colored_echo yellow "This is a mistake and you want to either remove the hash completely, or add an extra one."
             fi
+        fi
 
-            if [ -n "$PRE_FIXUP_HASH" ]; then
-                POST_FIXUP_HASH=$(get_hash "$VENDOR_REPO_FILE")
-            fi
-
-            if [ "${KANG}" = true ]; then
-                print_spec "${IS_PRODUCT_PACKAGE}" "${SPEC_SRC_FILE}" "${SPEC_DST_FILE}" "${SPEC_ARGS}" "${PRE_FIXUP_HASH}" "${POST_FIXUP_HASH}"
-            fi
-
-            # Check and print whether the fixup pipeline actually did anything.
-            # This isn't done right after the fixup pipeline because we want this print
-            # to come after print_spec above, when in kang mode.
-            if [ "${PRE_FIXUP_HASH}" != "${POST_FIXUP_HASH}" ]; then
-                printf "    + Fixed up %s\n" "${BLOB_DISPLAY_NAME}"
-                # Now sanity-check the spec for this blob.
-                if [ "${KANG}" = false ] && [ -z "${FIXUP_HASH}" ] && [ -n "${HASH}" ]; then
-                    colored_echo yellow "WARNING: The ${BLOB_DISPLAY_NAME} file was fixed up, but it is pinned."
-                    colored_echo yellow "This is a mistake and you want to either remove the hash completely, or add an extra one."
+        if [ "${KANG}" = false ]; then
+            if [ -n "${FIXUP_HASH}" ]; then
+                if [ "${FIXUP_HASH}" != "${POST_FIXUP_HASH}" ]; then
+                    colored_echo red "    !! ${BLOB_DISPLAY_NAME}: Fixup hash ${FIXUP_HASH} does not match ${POST_FIXUP_HASH}"
                 fi
+            elif [ -n "${HASH}" ] && [ "${HASH}" != "${POST_FIXUP_HASH}" ]; then
+                colored_echo red "    !! ${BLOB_DISPLAY_NAME}: Hash ${HASH} does not match ${POST_FIXUP_HASH}"
             fi
         fi
 
@@ -2523,7 +2572,6 @@ function generate_prop_list_from_image() {
 }
 
 function colored_echo() {
-    IFS=" "
     local COLOR=$1
     shift
     if ! [[ $COLOR =~ ^[0-9]$ ]]; then
