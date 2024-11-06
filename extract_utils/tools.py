@@ -39,7 +39,7 @@ apktool_path = path.join(common_binaries_dir, 'apktool/apktool.jar')
 jdk_binaries_dir = path.join(android_root, 'prebuilts/jdk/jdk21/linux-x86/bin')
 java_path = path.join(jdk_binaries_dir, 'java')
 
-lineage_scripts_dir = path.join(android_root, 'lineage/scripts')
+lineage_scripts_dir = path.join(android_root, 'calyx/scripts')
 carriersettings_extractor_path = path.join(
     lineage_scripts_dir,
     'carriersettings-extractor/carriersettings_extractor.py',
