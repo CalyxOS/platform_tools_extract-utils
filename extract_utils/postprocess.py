@@ -21,7 +21,7 @@ postprocess_fn_type = Callable[[PostprocessCtx], None]
 
 
 def postprocess_carriersettings_fn_impl(
-    input_path: str, output_path: str, ctx: PostprocessCtx
+    input_path: str, apn_output_path: str, output_path: str, ctx: PostprocessCtx
 ):
     os.makedirs(output_path, exist_ok=True)
 
@@ -30,6 +30,8 @@ def postprocess_carriersettings_fn_impl(
             carriersettings_extractor_path,
             '-i',
             input_path,
+            '-a',
+            apn_output_path,
             '-v',
             output_path,
         ]

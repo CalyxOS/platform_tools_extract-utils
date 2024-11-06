@@ -511,8 +511,14 @@ class ExtractUtilsModule:
         return proprietary_file
 
     def add_generated_carriersettings(self):
+        #file_name = 'apns-conf.xml'
         package_name = 'CarrierConfigOverlay'
         proprietary_file = self.add_generated_carriersettings_file()
+        #self.add_copy_file(
+        #    proprietary_file.partition,
+        #    'etc',
+        #    file_name,
+        #)
         self.add_rro_package(
             package_name,
             'com.android.carrierconfig',
@@ -526,6 +532,11 @@ class ExtractUtilsModule:
             proprietary_file.partition,
             proprietary_file.rel_path,
         )
+        apn_xml_dir_path = path.join(
+            vendor_path,
+            proprietary_file.partition,
+            'etc',
+        )
         rro_xml_dir_path = path.join(
             self.vendor_rro_path,
             package_name,
@@ -535,6 +546,7 @@ class ExtractUtilsModule:
         postprocess_fn = partial(
             postprocess_carriersettings_fn_impl,
             pb_dir_path,
+            apn_xml_dir_path,
             rro_xml_dir_path,
         )
         self.add_postprocess_fn(postprocess_fn)
