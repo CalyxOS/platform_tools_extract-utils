@@ -45,7 +45,7 @@ llvm_binaries_dir = path.join(
 )
 llvm_objdump_path = path.join(llvm_binaries_dir, 'llvm-objdump')
 
-lineage_scripts_dir = path.join(android_root, 'lineage/scripts')
+lineage_scripts_dir = path.join(android_root, 'calyx/scripts')
 carriersettings_extractor_path = path.join(
     lineage_scripts_dir,
     'carriersettings-extractor/carriersettings_extractor.py',
