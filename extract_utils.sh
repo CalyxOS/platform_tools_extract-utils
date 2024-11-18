@@ -1,8 +1,7 @@
 #!/bin/bash
 #
-# Copyright (C) 2016 The CyanogenMod Project
-# Copyright (C) 2017-2024 The LineageOS Project
-#
+# SPDX-FileCopyrightText: 2016 The CyanogenMod Project
+# SPDX-FileCopyrightText: 2017-2024 The LineageOS Project
 # SPDX-License-Identifier: Apache-2.0
 #
 
@@ -251,7 +250,9 @@ function prefix_match() {
                 FILTERED_ARGS+=("$ARG")
             done
 
-            if [ ${#FILTERED_ARGS[@]} -eq 0 ]; then
+            FILTERED_ARGS=$(IFS=";" echo "${FILTERED_ARGS[@]}")
+
+            if [ -z "$FILTERED_ARGS" ]; then
                 NEW_ARRAY+=("${FILE#"$PREFIX"}")
             else
                 NEW_ARRAY+=("${FILE#"$PREFIX"};${FILTERED_ARGS}")
@@ -2570,7 +2571,6 @@ function generate_prop_list_from_image() {
 }
 
 function colored_echo() {
-    IFS=" "
     local COLOR=$1
     shift
     if ! [[ $COLOR =~ ^[0-9]$ ]]; then
