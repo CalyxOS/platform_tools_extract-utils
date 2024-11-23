@@ -8,12 +8,11 @@ from __future__ import annotations
 import os
 from contextlib import ExitStack, contextmanager
 from json import JSONEncoder
-from typing import List, Protocol, TextIO
+from typing import Iterable, List, Optional, Protocol, TextIO
 
 from extract_utils.bp_builder import BpBuilder, FileBpBuilder
 from extract_utils.bp_encoder import BpJSONEncoder
 from extract_utils.elf import (
-    get_file_machine_bits,
     get_file_machine_bits_libs,
     remove_libs_so_ending,
 )
@@ -22,7 +21,6 @@ from extract_utils.file import (
     File,
     FileArgs,
     FileTree,
-    SimpleFileList,
 )
 from extract_utils.fixups_lib import lib_fixups_type, run_libs_fixup
 from extract_utils.utils import file_path_sha1
@@ -66,7 +64,7 @@ class MakefilesCtx:
 
         with ExitStack() as stack:
             files = [
-                stack.enter_context(open(file_path, 'w'))
+                stack.enter_context(open(file_path, 'w', encoding='utf-8'))
                 for file_path in file_paths
             ]
             yield MakefilesCtx(legacy, *files)
@@ -78,12 +76,17 @@ class ProductPackagesCtx:
         check_elf: bool,
         vendor: str,
         vendor_prop_path: str,
+        vendor_prop_rel_path: str,
         vendor_prop_rel_sub_path: str,
         lib_fixups: lib_fixups_type,
     ):
         self.check_elf = check_elf
         self.vendor = vendor
+        # Absolute path of the vendor sub-directory
         self.vendor_prop_path = vendor_prop_path
+        # Path of the vendor sub-directory relative to android root
+        self.vendor_prop_rel_path = vendor_prop_rel_path
+        # Path of the vendor sub-directory relative to the vendor path
         self.vendor_prop_rel_sub_path = vendor_prop_rel_sub_path
         self.lib_fixups = lib_fixups
 
@@ -189,28 +192,25 @@ def write_elfs_package(
     file = files[0]
 
     gen_deps, enable_check_elf = file_gen_deps_check_elf(ctx.check_elf, file)
-    file_path = f'{ctx.vendor_prop_path}/{file.dst}'
-    machine, bits, libs = get_file_machine_bits_libs(file_path, gen_deps)
-    deps = remove_libs_so_ending(libs)
 
-    if is_bin and (machine is None or bits is None):
-        return write_sh_package(files[0], builder, any_extension=True)
-
-    assert machine is not None
-    assert bits is not None
-    machines = [machine]
-    bitses = [bits]
+    machines = []
+    bitses = []
+    depses = []
 
     partition = builder.get_partition()
-    deps = run_libs_fixup(ctx.lib_fixups, deps, partition)
 
-    for f in files[1:]:
+    for f in files:
         f_path = f'{ctx.vendor_prop_path}/{f.dst}'
-        machine, bits = get_file_machine_bits(f_path)
-        assert machine is not None
-        assert bits is not None
+
+        machine, bits, libs = get_file_machine_bits_libs(f_path, gen_deps)
+        if is_bin and (machine is None or bits is None):
+            return write_sh_package(files[0], builder, any_extension=True)
+
+        deps = remove_libs_so_ending(libs)
+        deps = run_libs_fixup(ctx.lib_fixups, deps, partition)
         machines.append(machine)
         bitses.append(bits)
+        depses.append(deps)
 
     stem, package_name = file_stem_package_name(
         file, can_have_stem=True, any_extension=is_bin
@@ -222,7 +222,7 @@ def write_elfs_package(
             .name(package_name)
             .stem(stem)
             .owner()
-            .targets(files, machines, deps)
+            .targets(files, machines, depses)
             .multilibs(bitses)
             .check_elf(enable_check_elf)
             .no_strip()
@@ -239,7 +239,7 @@ def write_elfs_package(
         .stem(stem)
         .owner()
         .no_strip()
-        .targets(files, machines, deps)
+        .targets(files, machines, depses)
         .multilibs(bitses)
         .check_elf(enable_check_elf)
         .relative_install_path()
@@ -399,7 +399,7 @@ def write_common_packages_group(
     *args,
     **kwargs,
 ):
-    for files in file_tree:
+    for files in file_tree.common_files_iter():
         builder = create_builder(ctx, file_tree, files[0], encoder)
         package_name = fn(files, builder, *args, **kwargs)
         builder.write(out)
@@ -442,7 +442,7 @@ def write_product_packages(
     base_file_tree: FileTree,
 ):
     encoder = BpJSONEncoder(legacy=ctx.legacy)
-    package_names = []
+    package_names: List[str] = []
 
     def w(fn: write_package_fn, file_tree: FileTree, *args, **kwargs):
         return write_packages_group(
@@ -511,9 +511,16 @@ def write_product_packages(
     write_packages_inclusion(package_names, ctx.product_mk_out)
 
 
-def write_product_copy_files(rel_path: str, files: SimpleFileList, out: TextIO):
+def write_product_copy_files(
+    ctx: MakefilesCtx,
+    packages_ctx: ProductPackagesCtx,
+    files: Iterable[File],
+):
     if not files:
         return
+
+    out = ctx.product_mk_out
+    rel_path = packages_ctx.vendor_prop_rel_path
 
     out.write('\nPRODUCT_COPY_FILES +=')
 
@@ -555,10 +562,10 @@ def write_symlink_package(
 
 def write_symlink_packages(
     ctx: MakefilesCtx,
-    files: SimpleFileList,
+    files: Iterable[File],
 ):
     encoder = BpJSONEncoder(legacy=ctx.legacy)
-    package_names = []
+    package_names: List[str] = []
 
     for file in files:
         symlinks = file.symlinks
@@ -576,7 +583,7 @@ def write_symlink_packages(
     write_packages_inclusion(package_names, ctx.product_mk_out)
 
 
-def write_mk_firmware_ab_partitions(files: SimpleFileList, out: TextIO):
+def write_mk_firmware_ab_partitions(files: Iterable[File], out: TextIO):
     has_ab = False
     for file in files:
         if FileArgs.AB in file.args:
@@ -615,7 +622,7 @@ def write_mk_firmware_file(
 def write_mk_firmware(
     vendor_path: str,
     rel_sub_path: str,
-    files: SimpleFileList,
+    files: Iterable[File],
     out: TextIO,
 ):
     for file in files:
@@ -675,16 +682,16 @@ PRODUCT_SOONG_NAMESPACES += \\
     )
 
 
-def write_bp_soong_namespaces(ctx: MakefilesCtx, namespace_imports: List[str]):
-    if not namespace_imports:
-        return
-
+def write_bp_soong_namespaces(
+    ctx: MakefilesCtx,
+    namespace_imports: Optional[List[str]],
+):
     encoder = BpJSONEncoder(legacy=ctx.legacy)
 
     (
         BpBuilder(encoder)
         .set_rule_name('soong_namespace')
-        .set('imports', namespace_imports)
+        .set('imports', namespace_imports, optional=True)
         .write(ctx.bp_out)
     )
 
@@ -753,10 +760,10 @@ def write_rro_package(
 
     os.makedirs(package_path, exist_ok=True)
 
-    with open(rro_bp_path, 'w') as rro_bp_out:
+    with open(rro_bp_path, 'w', encoding='utf-8') as rro_bp_out:
         write_bp_rro(package_name, partition, rro_bp_out, encoder)
 
-    with open(rro_manifest_path, 'w') as rro_manifest_out:
+    with open(rro_manifest_path, 'w', encoding='utf-8') as rro_manifest_out:
         write_androidmanifest_rro(
             target_package_name,
             partition,

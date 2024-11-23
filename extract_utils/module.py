@@ -68,7 +68,10 @@ class ProprietaryFileType(Enum):
 
 
 fix_file_list_fn_type = Callable[[FileList], None]
-pre_post_makefile_generation_fn_type = Callable[[MakefilesCtx], None]
+pre_post_makefile_generation_fn_type = Callable[
+    [MakefilesCtx, ProductPackagesCtx],
+    None,
+]
 
 
 class ProprietaryFile:
@@ -77,6 +80,18 @@ class ProprietaryFile:
         file_list_path: str,
         vendor_rel_sub_path: str = 'proprietary',
         fix_file_list: Optional[fix_file_list_fn_type] = None,
+        pre_makefile_generation_fn: Optional[
+            pre_post_makefile_generation_fn_type
+        ] = None,
+        pre_makefile_generation_fns: Optional[
+            List[pre_post_makefile_generation_fn_type]
+        ] = None,
+        post_makefile_generation_fn: Optional[
+            pre_post_makefile_generation_fn_type
+        ] = None,
+        post_makefile_generation_fns: Optional[
+            List[pre_post_makefile_generation_fn_type]
+        ] = None,
         kind=ProprietaryFileType.BLOBS,
     ):
         self.file_list_path = file_list_path
@@ -86,46 +101,73 @@ class ProprietaryFile:
 
         self.__fix_file_list = fix_file_list
 
-        self.pre_makefile_generation_fns: List[
-            pre_post_makefile_generation_fn_type
-        ] = []
-        self.post_makefile_generation_fns: List[
-            pre_post_makefile_generation_fn_type
-        ] = []
+        if pre_makefile_generation_fns is None:
+            pre_makefile_generation_fns = []
+        self.pre_makefile_generation_fns = pre_makefile_generation_fns
+
+        if pre_makefile_generation_fn is not None:
+            self.add_pre_makefile_generation_fn(pre_makefile_generation_fn)
+
+        if post_makefile_generation_fns is None:
+            post_makefile_generation_fns = []
+        self.post_makefile_generation_fns = post_makefile_generation_fns
+
+        if post_makefile_generation_fn is not None:
+            self.add_post_makefile_generation_fn(post_makefile_generation_fn)
 
         self.kind = kind
 
-    def fix_file_list(self, file_list: FileList):
+    def fix_file_list(self):
         if self.__fix_file_list is not None:
-            self.__fix_file_list(file_list)
+            self.__fix_file_list(self.file_list)
+
+    def add_pre_makefile_generation_fn(
+        self,
+        fn: pre_post_makefile_generation_fn_type,
+    ):
+        self.pre_makefile_generation_fns.append(fn)
+
+    def add_post_makefile_generation_fn(
+        self,
+        fn: pre_post_makefile_generation_fn_type,
+    ):
+        self.post_makefile_generation_fns.append(fn)
 
     def add_pre_post_makefile_generation_fn(
         self,
         pre_fn: pre_post_makefile_generation_fn_type,
         post_fn: pre_post_makefile_generation_fn_type,
     ) -> Self:
-        self.pre_makefile_generation_fns.append(pre_fn)
-        self.post_makefile_generation_fns.append(post_fn)
+        self.add_pre_makefile_generation_fn(pre_fn)
+        self.add_post_makefile_generation_fn(post_fn)
         return self
 
     def add_copy_files_guard(self, name: str, value: str, invert=False) -> Self:
-        def guard_begin_fn(ctx: MakefilesCtx):
+        def guard_begin_fn(ctx: MakefilesCtx, *args, **kwargs):
             write_mk_guard_begin(name, value, ctx.product_mk_out, invert=invert)
 
-        def guard_end_fn(ctx: MakefilesCtx):
+        def guard_end_fn(ctx: MakefilesCtx, *args, **kwargs):
             write_mk_guard_end(ctx.product_mk_out)
 
         self.add_pre_post_makefile_generation_fn(guard_begin_fn, guard_end_fn)
 
         return self
 
-    def run_pre_makefile_generation_fns(self, ctx: MakefilesCtx):
+    def run_pre_makefile_generation_fns(
+        self,
+        ctx: MakefilesCtx,
+        packages_ctx: ProductPackagesCtx,
+    ):
         for fn in self.pre_makefile_generation_fns:
-            fn(ctx)
+            fn(ctx, packages_ctx)
 
-    def run_post_makefile_generation_fns(self, ctx: MakefilesCtx):
+    def run_post_makefile_generation_fns(
+        self,
+        ctx: MakefilesCtx,
+        packages_ctx: ProductPackagesCtx,
+    ):
         for fn in reversed(self.post_makefile_generation_fns):
-            fn(ctx)
+            fn(ctx, packages_ctx)
 
     def write_makefiles(self, module: ExtractUtilsModule, ctx: MakefilesCtx):
         vendor_path = path.join(
@@ -141,16 +183,17 @@ class ProprietaryFile:
             module.check_elf,
             module.vendor,
             vendor_path,
+            vendor_rel_path,
             self.vendor_rel_sub_path,
             module.lib_fixups,
         )
 
-        self.run_pre_makefile_generation_fns(ctx)
+        self.run_pre_makefile_generation_fns(ctx, packages_ctx)
 
         write_product_copy_files(
-            vendor_rel_path,
+            ctx,
+            packages_ctx,
             self.file_list.copy_files,
-            ctx.product_mk_out,
         )
 
         write_product_packages(
@@ -164,7 +207,7 @@ class ProprietaryFile:
             self.file_list.package_symlinks,
         )
 
-        self.run_post_makefile_generation_fns(ctx)
+        self.run_post_makefile_generation_fns(ctx, packages_ctx)
 
     def write_to_file(self):
         self.file_list.write_to_file(self.file_list_path)
@@ -313,7 +356,7 @@ class GeneratedProprietaryFile(ProprietaryFile):
                 module.device_path,
                 self.skip_file_list_name,
             )
-            with open(skip_file_list_path, 'r') as f:
+            with open(skip_file_list_path, 'r', encoding='utf-8') as f:
                 skipped_file_rel_paths = parse_lines(f)
 
         partition_rel_path = self.partition
@@ -332,9 +375,12 @@ class GeneratedProprietaryFile(ProprietaryFile):
         ]
 
         self.file_list.add_from_lines(header_lines + file_srcs)
-        self.fix_file_list(self.file_list)
+        self.fix_file_list()
 
     def get_partitions(self) -> Set[str]:
+        if not self.file_list.all_files:
+            return set()
+
         return {self.partition}
 
 
@@ -363,6 +409,7 @@ class ExtractUtilsModule:
         check_elf=True,
         add_firmware_proprietary_file=False,
         add_factory_proprietary_file=False,
+        add_generated_carriersettings_apns=False,
         add_generated_carriersettings_file=False,
         add_generated_carriersettings=False,
         skip_main_proprietary_file=False,
@@ -377,10 +424,7 @@ class ExtractUtilsModule:
         self.lib_fixups = flatten_fixups(lib_fixups)
         self.extract_fns = flatten_fixups(extract_fns)
 
-        if namespace_imports is None:
-            namespace_imports = []
         self.namespace_imports = namespace_imports
-
         self.check_elf = check_elf
 
         if device_rel_path is None:
@@ -400,6 +444,8 @@ class ExtractUtilsModule:
 
         if add_generated_carriersettings:
             self.add_generated_carriersettings()
+        elif add_generated_carriersettings_apns:
+            self.add_generated_carriersettings(extract_apns=True)
         elif add_generated_carriersettings_file:
             self.add_generated_carriersettings_file()
 
@@ -407,7 +453,7 @@ class ExtractUtilsModule:
             self.add_proprietary_file('proprietary-files.txt')
 
     def get_partitions(self, kind: ProprietaryFileType):
-        partitions = []
+        partitions: List[str] = []
 
         for proprietary_file in self.proprietary_files:
             if proprietary_file.kind is not kind:
@@ -420,7 +466,7 @@ class ExtractUtilsModule:
         return partitions
 
     def get_files(self, kind: ProprietaryFileType):
-        files = []
+        files: List[str] = []
 
         for proprietary_file in self.proprietary_files:
             if proprietary_file.kind is not kind:
@@ -510,7 +556,7 @@ class ExtractUtilsModule:
         self.proprietary_files.append(proprietary_file)
         return proprietary_file
 
-    def add_generated_carriersettings(self):
+    def add_generated_carriersettings(self, extract_apns=False):
         package_name = 'CarrierConfigOverlay'
         proprietary_file = self.add_generated_carriersettings_file()
         self.add_rro_package(
@@ -532,10 +578,39 @@ class ExtractUtilsModule:
             'res/xml',
         )
 
+        apn_xml_dir = None
+        if extract_apns:
+            apn_xml_dir = path.join(
+                vendor_path,
+                proprietary_file.partition,
+                'etc',
+            )
+
+            apn_xml_rel_file_path = path.join(
+                proprietary_file.partition,
+                'etc',
+                'apns-conf.xml',
+            )
+
+            def add_apn_copy_fn(
+                ctx: MakefilesCtx,
+                packages_ctx: ProductPackagesCtx,
+                *args,
+                **kwargs,
+            ):
+                write_product_copy_files(
+                    ctx,
+                    packages_ctx,
+                    [File(apn_xml_rel_file_path)],
+                )
+
+            proprietary_file.add_post_makefile_generation_fn(add_apn_copy_fn)
+
         postprocess_fn = partial(
             postprocess_carriersettings_fn_impl,
             pb_dir_path,
             rro_xml_dir_path,
+            apn_output_path=apn_xml_dir,
         )
         self.add_postprocess_fn(postprocess_fn)
         return proprietary_file
@@ -623,6 +698,11 @@ class ExtractUtilsModule:
         section: Optional[str],
     ):
         for proprietary_file in self.proprietary_files:
+            if section is not None and isinstance(
+                proprietary_file, GeneratedProprietaryFile
+            ):
+                continue
+
             if regenerate and isinstance(
                 proprietary_file,
                 GeneratedProprietaryFile,
