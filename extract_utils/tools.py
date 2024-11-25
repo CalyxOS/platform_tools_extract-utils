@@ -9,7 +9,7 @@ from os import path
 from typing import Dict
 
 patchelf_versions = ['0_8', '0_9', '0_17_2', '0_18']
-DEFAULT_PATCHELF_VERSION = '0_9'
+DEFAULT_PATCHELF_VERSION = '0_18'
 
 script_dir = path.dirname(path.realpath(__file__))
 android_root = path.realpath(path.join(script_dir, '..', '..', '..'))
@@ -38,6 +38,12 @@ apktool_path = path.join(common_binaries_dir, 'apktool/apktool.jar')
 
 jdk_binaries_dir = path.join(android_root, 'prebuilts/jdk/jdk21/linux-x86/bin')
 java_path = path.join(jdk_binaries_dir, 'java')
+
+llvm_binaries_dir = path.join(
+    android_root,
+    'prebuilts/clang/host/linux-x86/llvm-binutils-stable',
+)
+llvm_objdump_path = path.join(llvm_binaries_dir, 'llvm-objdump')
 
 lineage_scripts_dir = path.join(android_root, 'lineage/scripts')
 carriersettings_extractor_path = path.join(

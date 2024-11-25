@@ -42,6 +42,7 @@ BIN_PARTS = ['bin']
 
 class FileArgs(str, Enum):
     AB = 'AB'
+    CERTIFICATE = 'CERTIFICATE'
     MAKE_COPY_RULE = 'MAKE_COPY_RULE'
     MAKE_COPY_RULE_ONLY = 'MAKE_COPY_RULE_ONLY'
     MODULE = 'MODULE'
@@ -60,6 +61,7 @@ class FileArgs(str, Enum):
 
 FILE_ARGS_TYPE_MAP = {
     FileArgs.AB: True,
+    FileArgs.CERTIFICATE: str,
     FileArgs.MAKE_COPY_RULE: True,
     FileArgs.MAKE_COPY_RULE_ONLY: True,
     FileArgs.MODULE: str,
@@ -81,8 +83,8 @@ assert len(FileArgs) == len(FILE_ARGS_TYPE_MAP)
 
 class File:
     def __init__(self, line: str):
-        self.fixup_hash = None
-        self.hash = None
+        self.fixup_hash: Optional[str] = None
+        self.hash: Optional[str] = None
         self.is_package = False
 
         line = line.strip()
@@ -121,7 +123,7 @@ class File:
             assert isinstance(prefix, str)
             assert isinstance(extra, str)
 
-            if not len(extra):
+            if not extra:
                 raise ValueError(f'Unexpected empty extra in {line}')
 
             if prefix == ':':
@@ -129,6 +131,7 @@ class File:
             elif prefix == ';':
                 k_v = extra.split('=', 1)
                 k = k_v[0]
+                v: Literal[True] | str
                 if len(k_v) == 1:
                     v = True
                 else:
@@ -265,6 +268,11 @@ class File:
         return self.args.get(FileArgs.REQUIRED)
 
     @property
+    def certificate(self):
+        certificate = self.args.get(FileArgs.CERTIFICATE)
+        return f':{certificate}' if certificate else None
+
+    @property
     def presigned(self):
         return FileArgs.PRESIGNED in self.args
 
@@ -299,7 +307,7 @@ class FileTree:
         self.__common = common
 
         self.parts = parts
-        self.parts_prefix_len = sum([len(p) + 1 for p in parts])
+        self.parts_prefix_len = sum(len(p) + 1 for p in parts)
 
         if tree is not None:
             self.__tree = tree
@@ -389,7 +397,7 @@ class CommonFileTree(FileTree):
     def __init__(self, parts: List[str]):
         super().__init__(parts=parts, common=True)
 
-    def __iter__(self) -> Iterator[List[File]]:
+    def common_files_iter(self) -> Iterator[List[File]]:
         return self._files_list(self.tree)
 
     @classmethod
@@ -461,7 +469,7 @@ class FileList:
         # These are filtered by section
         self.files = SimpleFileList()
         self.pinned_files = SimpleFileList()
-        self.partitions = set()
+        self.partitions: set[str] = set()
 
         # These are not filtered by section since makefile generation
         # cannot be done per-section
@@ -543,7 +551,7 @@ class FileList:
     def __add_line(self, line: str):
         if not is_valid_line(line):
             self.__lines_or_files.append(line)
-            return
+            return None
 
         # Postpone adding the files to be able to sort them based on dst
         file = File(line)
@@ -575,11 +583,11 @@ class FileList:
             self.__add_file(file, section)
 
     def add_from_file(self, file_path: str):
-        with open(file_path, 'r') as f:
+        with open(file_path, 'r', encoding='utf-8') as f:
             self.add_from_lines(f)
 
     def write_to_file(self, file_path: str):
-        with open(file_path, 'w') as f:
+        with open(file_path, 'w', encoding='utf-8') as f:
             for line_or_file in self.__lines_or_files:
                 f.write(f'{line_or_file}')
                 if isinstance(line_or_file, File):

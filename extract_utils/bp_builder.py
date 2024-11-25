@@ -59,12 +59,12 @@ PARTITION_SPECIFIC_MAP = {
 
 class BpBuilder:
     def __init__(self, encoder: JSONEncoder):
-        self.__owner = None
-        self.__partition = None
+        self.__owner: Optional[str] = None
+        self.__partition: Optional[str] = None
         self.__rule_name: Optional[str] = None
         self.__encoder = encoder
 
-        self.o = {}
+        self.o: dict = {}
 
     def set_owner(self, owner: str):
         self.__owner = owner
@@ -201,6 +201,8 @@ class FileBpBuilder(BpBuilder):
         if self.__file.presigned:
             self.set('preprocessed', True)
             self.set('presigned', True)
+        elif self.__file.certificate:
+            self.set('certificate', self.__file.certificate)
         else:
             self.set('certificate', 'platform')
         return self
@@ -228,8 +230,8 @@ class FileBpBuilder(BpBuilder):
         self,
         files: List[File],
         machines: List[EM],
-        deps: Optional[List[str]],
+        depses: List[Optional[List[str]]],
     ) -> Self:
-        for f, machine in zip(files, machines):
+        for f, machine, deps in zip(files, machines, depses):
             self.target(f, machine, deps)
         return self

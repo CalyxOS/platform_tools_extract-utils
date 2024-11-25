@@ -12,17 +12,18 @@ from extract_utils.fixups_blob import (
 )
 from extract_utils.fixups_lib import (
     lib_fixup_remove,
-    lib_fixup_remove_arch_suffix,
-    lib_fixup_remove_proto_version_suffix,
-    lib_fixup_vendorcompat,
+    lib_fixups,
     lib_fixups_user_type,
-    libs_clang_rt_ubsan,
-    libs_proto_3_9_1,
-    libs_proto_21_12,
 )
 from extract_utils.main import (
     ExtractUtils,
     ExtractUtilsModule,
+)
+from extract_utils.tools import (
+    llvm_objdump_path,
+)
+from extract_utils.utils import (
+    run_cmd,
 )
 
 namespace_imports = [
@@ -35,9 +36,7 @@ def lib_fixup_vendor_suffix(lib: str, partition: str, *args, **kwargs):
 
 
 lib_fixups: lib_fixups_user_type = {
-    libs_clang_rt_ubsan: lib_fixup_remove_arch_suffix,
-    libs_proto_3_9_1: lib_fixup_vendorcompat,
-    libs_proto_21_12: lib_fixup_remove_proto_version_suffix,
+    **lib_fixups,
     (
         'vendor.twopac.hardware.xoo@1.0',
         'vendor.twopac.hardware.oxo@1.0',
@@ -47,16 +46,30 @@ lib_fixups: lib_fixups_user_type = {
 }
 
 
-def blob_fixup_test_flag(
+def blob_fixup_return_1(
     ctx: BlobFixupCtx,
     file: File,
     file_path: str,
+    symbol: str,
     *args,
-    **kargs,
+    **kwargs,
 ):
-    with open(file_path, 'rb+') as f:
-        f.seek(1337)
-        f.write(b'\x01')
+    for line in run_cmd(
+        [
+            llvm_objdump_path,
+            '--dynamic-syms',
+            file_path,
+        ]
+    ).splitlines():
+        if line.endswith(f' {symbol}'):
+            offset, _ = line.split(maxsplit=1)
+
+            with open(file_path, 'rb+') as f:
+                f.seek(int(offset, 16))
+                f.write(b'\x01\x00\xa0\xe3')  # mov r0, #1
+                f.write(b'\x1e\xff\x2f\xe1')  # bx lr
+
+            break
 
 
 blob_fixups: blob_fixups_user_type = {
@@ -66,7 +79,7 @@ blob_fixups: blob_fixups_user_type = {
         .patch_file('blob-patches/TestConf.patch')
         .regex_replace('(LOG_.*_ENABLED)=1', '\\1=0')
         .add_line_if_missing('DEBUG=0'),
-    'vendor/etc/test.xml': blob_fixup()
+    ('vendor/etc/test.0.xml', 'vendor/etc/test.1.xml'): blob_fixup()
         .fix_xml(),
     'vendor/lib/test.so': blob_fixup()
         .patchelf_version('0_17_2')
@@ -76,7 +89,7 @@ blob_fixups: blob_fixups_user_type = {
         .replace_needed('from.so', 'to.so')
         .binary_regex_replace(b'\xFF\x00\x00\x94', b'\xFE\x00\x00\x94')
         .sig_replace('C0 03 5F D6 ?? ?? ?? ?? C0 03 5F D6', '1F 20 03 D5')
-        .call(blob_fixup_test_flag),
+        .call(blob_fixup_return_1, 'license_check'),
 }  # fmt: skip
 
 module = ExtractUtilsModule(

@@ -70,13 +70,14 @@ class Color(str, Enum):
 
 
 def color_print(*args, color: Color, **kwargs):
-    args = list(args)
-    args[0] = color.value + str(args[0])
-    args[-1] = str(args[-1]) + Color.END.value
-    print(*args, **kwargs)
+    args_str = ' '.join(str(arg) for arg in args)
+    args_str = color.value + args_str + Color.END.value
+    print(args_str, **kwargs)
 
 
 parallel_input_cmds = List[Tuple[str, List[str]]]
+parallel_input_cmds_ret_success = List[str]
+parallel_input_cmds_ret_fail = List[Tuple[str, int, str]]
 
 
 @cache
@@ -106,19 +107,33 @@ def process_cmds_in_parallel(input_cmds: parallel_input_cmds, fatal=False):
         proc = Popen(cmd, stdout=PIPE, stderr=PIPE, text=True)
         input_procs.append((input_id, proc))
 
+    ret_success: parallel_input_cmds_ret_success = []
+    ret_fail: parallel_input_cmds_ret_fail = []
     for input_id, proc in input_procs:
         _, stderr = proc.communicate()
-        if proc.returncode != 0:
+        assert isinstance(proc.returncode, int)
+        if proc.returncode:
             s = f'Failed to process {input_id}: {stderr.strip()}'
             if fatal:
                 raise ValueError(s)
-            else:
-                print(s)
+
+            ret_fail.append((input_id, proc.returncode, stderr))
+        else:
+            ret_success.append(input_id)
+
+    return ret_fail, ret_success
 
 
 def run_cmd(cmd: List[str], shell=False):
     cmd[0] = executable_path(cmd[0])
-    proc = run(cmd, stdout=PIPE, stderr=PIPE, text=True, shell=shell)
+    proc = run(
+        cmd,
+        stdout=PIPE,
+        stderr=PIPE,
+        text=True,
+        shell=shell,
+        check=False,
+    )
     if proc.returncode != 0:
         cmd_str = ' '.join(cmd)
         s = f'Failed to run command "{cmd_str}":\n'

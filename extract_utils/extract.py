@@ -12,10 +12,9 @@ import tarfile
 import tempfile
 from concurrent.futures import ProcessPoolExecutor
 from contextlib import contextmanager
-from functools import partial
 from os import path
 from tarfile import TarFile
-from typing import Callable, Generator, List, Optional, Union
+from typing import Callable, Generator, Iterable, List, Optional, Set, Union
 from zipfile import ZipFile
 
 from extract_utils.fixups import fixups_type, fixups_user_type
@@ -34,33 +33,20 @@ from extract_utils.utils import (
 )
 
 ALTERNATE_PARTITION_PATH_MAP = {
-    'product': [
-        'system/product',
-    ],
-    'system_ext': [
-        'system/system_ext',
-    ],
-    'odm': [
-        'vendor/odm',
-        'system/vendor/odm',
-    ],
-    'vendor': [
-        'system/vendor',
-    ],
+    'product': 'system/product',
+    'system_ext': 'system/system_ext',
+    'vendor': 'system/vendor',
+    'odm': 'vendor/odm',
 }
 
 
-DEFAULT_EXTRACTED_PARTITIONS = [
-    'system',
-    'odm',
-    'product',
-    'system_ext',
-    'vendor',
-]
 BROTLI_EXT = '.new.dat.br'
 SPARSE_DATA_EXT = '.new.dat'
 TRANSFER_LIST_EXT = '.transfer.list'
 SPARSE_CHUNK_SUFFIX = '_sparsechunk'
+PAYLOAD_BIN_FILE_NAME = 'payload.bin'
+SUPER_PARTITION_NAME = 'super'
+SUPER_IMG_NAME = 'super.img'
 
 
 extract_fn_type = Callable[['ExtractCtx', str, str], str | None]
@@ -72,109 +58,257 @@ extract_fns_type = fixups_type[extract_fns_value_type]
 class ExtractCtx:
     def __init__(
         self,
-        keep_dump: bool,
-        extract_fns: extract_fns_type,
-        extract_partitions: List[str],
-        firmware_partitions: List[str],
-        firmware_files: List[str],
-        factory_files: List[str],
+        keep_dump=False,
+        extract_fns: Optional[extract_fns_type] = None,
+        extract_partitions: Optional[List[str]] = None,
+        firmware_partitions: Optional[List[str]] = None,
+        firmware_files: Optional[List[str]] = None,
+        factory_files: Optional[List[str]] = None,
     ):
+        if extract_fns is None:
+            extract_fns = {}
+        if extract_partitions is None:
+            extract_partitions = []
+        if firmware_partitions is None:
+            firmware_partitions = []
+        if firmware_files is None:
+            firmware_files = []
+        if factory_files is None:
+            factory_files = []
+
         self.keep_dump = keep_dump
+        # Files for extract functions are extracted if their name
+        # matches the regex
         self.extract_fns = extract_fns
+        # Files for partitions are extracted if, after removing the
+        # extension, their name matches a partition
         self.extract_partitions = extract_partitions
         self.firmware_partitions = firmware_partitions
+        self.extra_partitions: List[str] = []
+        # Files are extracted if their name matches as-is
         self.firmware_files = firmware_files
         self.factory_files = factory_files
+        self.extra_files: List[str] = []
 
 
-def should_extract_partition_file_name(
-    extract_partitions: Optional[List[str]],
-    file_name: str,
-):
-    if extract_partitions is None:
-        return True
-
-    if file_name in extract_partitions:
-        return True
-
-    root_rest = file_name.split('.', 1)
-
-    return root_rest[0] in extract_partitions
+def file_name_to_partition(file_name: str):
+    return file_name.split('.', 1)[0]
 
 
-def find_files_with_magic(
+def find_files(
     extract_partitions: Optional[List[str]],
     input_path: str,
-    magic: bytes,
-    position: int = 0,
+    magic: Optional[bytes] = None,
+    position=0,
+    ext: Optional[str] = None,
 ) -> List[str]:
     file_paths = []
     for file in os.scandir(input_path):
         if not file.is_file():
             continue
 
-        if not should_extract_partition_file_name(
-            extract_partitions,
-            file.name,
+        partition = file_name_to_partition(file.name)
+        if (
+            extract_partitions is not None
+            and partition not in extract_partitions
+            and file.name not in extract_partitions
         ):
             continue
 
-        with open(file, 'rb') as f:
-            f.seek(position)
-            file_magic = f.read(len(magic))
-            if file_magic == magic:
-                file_paths.append(file.path)
+        if ext is not None and not file.name.endswith(ext):
+            continue
+
+        if magic is not None:
+            with open(file, 'rb') as f:
+                f.seek(position)
+                file_magic = f.read(len(magic))
+                if file_magic != magic:
+                    continue
+
+        file_paths.append(file.path)
 
     return file_paths
 
 
-def find_files_with_ext(
-    extract_partitions: List[str],
-    input_path: str,
-    ext: str,
+def should_extract_pattern_file_name(
+    extract_fns: extract_fns_type, file_name: str
 ):
-    file_paths = []
-    for file in os.scandir(input_path):
-        if not file.is_file():
+    for extract_pattern in extract_fns:
+        match = re.match(extract_pattern, file_name)
+        if match is not None:
+            return True
+
+    return False
+
+
+def find_alternate_partitions(
+    extract_partitions: List[str],
+    found_partitions: Iterable[str],
+):
+    new_extract_partitions = []
+    for partition in extract_partitions:
+        if partition in found_partitions:
             continue
 
-        if not should_extract_partition_file_name(
-            extract_partitions,
-            file.name,
+        alternate_partition_path = ALTERNATE_PARTITION_PATH_MAP.get(partition)
+        if alternate_partition_path is None:
+            continue
+
+        alternate_partition, _ = alternate_partition_path.split('/', 1)
+        if (
+            alternate_partition in found_partitions
+            or alternate_partition in new_extract_partitions
         ):
             continue
 
-        if file.name.endswith(ext):
-            file_paths.append(file.path)
+        new_extract_partitions.append(alternate_partition)
 
-    return file_paths
+    return new_extract_partitions
 
 
-def find_sparse_raw_image_paths(extract_partitions: List[str], input_path: str):
-    magic = bytes([0x3A, 0xFF, 0x26, 0xED])
-    return find_files_with_magic(extract_partitions, input_path, magic)
+def _filter_files(
+    extract_partitions: List[str],
+    extract_file_names: List[str],
+    extract_fns: extract_fns_type,
+    file_paths: List[str],
+    found_partitions: Set[str],
+) -> List[str]:
+    found_file_paths: List[str] = []
+
+    for file_path in file_paths:
+        file_name = path.basename(file_path)
+
+        if file_name in extract_partitions:
+            found_file_paths.append(file_path)
+            found_partitions.add(file_name)
+            continue
+
+        partition = file_name_to_partition(file_name)
+        if partition in extract_partitions:
+            found_file_paths.append(file_path)
+            found_partitions.add(partition)
+            continue
+
+        if file_name in extract_file_names:
+            found_file_paths.append(file_path)
+            continue
+
+        for extract_pattern in extract_fns:
+            match = re.match(extract_pattern, file_name)
+            if match is not None:
+                found_file_paths.append(file_path)
+
+    return found_file_paths
+
+
+def filter_files(
+    partition_lists: List[List[str]],
+    file_name_lists: List[List[str]],
+    found_partitions: Set[str],
+    extract_fns: extract_fns_type,
+    file_paths: List[str],
+) -> List[str]:
+    extract_partitions = sum(partition_lists, [])
+    extract_file_names = sum(file_name_lists, [])
+    found_file_paths: List[str] = []
+
+    while extract_partitions:
+        found_file_paths += _filter_files(
+            extract_partitions,
+            extract_file_names,
+            extract_fns,
+            file_paths,
+            found_partitions,
+        )
+
+        # Prevent loop from adding matching files again, only partitions
+        # have alternatives
+        extract_file_names = []
+        extract_fns = {}
+
+        extract_partitions = find_alternate_partitions(
+            extract_partitions,
+            found_partitions,
+        )
+
+    return list(found_file_paths)
+
+
+def filter_extract_file_paths(
+    ctx: ExtractCtx,
+    file_paths: List[str],
+):
+    return filter_files(
+        [
+            ctx.extract_partitions,
+            ctx.firmware_partitions,
+            ctx.extra_partitions,
+        ],
+        [
+            ctx.firmware_files,
+            ctx.factory_files,
+            ctx.extra_files,
+        ],
+        set(),
+        dict(ctx.extract_fns),
+        file_paths,
+    )
+
+
+def filter_extract_partitions(
+    extract_partitions: List[str],
+    file_paths: List[str],
+):
+    new_extract_partitions: Set[str] = set()
+    filter_files(
+        [extract_partitions],
+        [],
+        new_extract_partitions,
+        {},
+        file_paths,
+    )
+    return list(new_extract_partitions)
+
+
+def update_extract_partitions(ctx: ExtractCtx, input_path: str):
+    file_paths = [f.path for f in os.scandir(input_path) if f.is_file()]
+
+    ctx.extract_partitions = filter_extract_partitions(
+        ctx.extract_partitions,
+        file_paths,
+    )
+
+
+def find_sparse_raw_paths(extract_partitions: List[str], input_path: str):
+    magic = 0xED26FF3A.to_bytes(4, 'little')
+    return find_files(extract_partitions, input_path, magic)
 
 
 def find_erofs_paths(extract_partitions: List[str], input_path: str):
-    magic = bytes([0xE2, 0xE1, 0xF5, 0xE0])
-    return find_files_with_magic(extract_partitions, input_path, magic, 1024)
+    magic = 0xE0F5E1E2.to_bytes(4, 'little')
+    return find_files(extract_partitions, input_path, magic, 1024)
 
 
 def find_ext4_paths(extract_partitions: List[str], input_path: str):
-    magic = bytes([0x53, 0xEF])
-    return find_files_with_magic(extract_partitions, input_path, magic, 1080)
+    magic = 0xEF53.to_bytes(2, 'little')
+    return find_files(extract_partitions, input_path, magic, 1080)
 
 
 def find_payload_paths(extract_partitions: List[str], input_path: str):
-    return find_files_with_magic(extract_partitions, input_path, b'CrAU')
+    return find_files(extract_partitions, input_path, b'CrAU')
 
 
-def find_super_img_path(input_path: str) -> Optional[str]:
-    super_img_path = path.join(input_path, 'super.img')
-    if path.isfile(super_img_path):
-        return super_img_path
+def find_super_img_paths(extract_partitions: List[str], input_path: str):
+    magic = 0x616C4467.to_bytes(4, 'little')
+    return find_files(extract_partitions, input_path, magic, 4096)
 
-    return None
+
+def find_brotli_paths(extract_partitions: List[str], input_path: str):
+    return find_files(extract_partitions, input_path, ext=BROTLI_EXT)
+
+
+def find_sparse_data_paths(extract_partitions: List[str], input_path: str):
+    return find_files(extract_partitions, input_path, ext=SPARSE_DATA_EXT)
 
 
 def print_file_paths(file_paths: List[str], file_type: str):
@@ -186,7 +320,7 @@ def print_file_paths(file_paths: List[str], file_type: str):
     print(f'Found {file_type} files: {file_names_str}')
 
 
-def remove_file_paths(file_paths: List[str]):
+def remove_file_paths(file_paths: Iterable[str]):
     if not file_paths:
         return
 
@@ -198,12 +332,17 @@ def remove_file_paths(file_paths: List[str]):
         os.remove(file_path)
 
 
-def extract_payload_bin(ctx: ExtractCtx, file_path: str, output_dir: str):
-    procs: parallel_input_cmds = []
-
+def _extract_payload_bin(
+    extract_partitions: List[str],
+    file_path: str,
+    output_dir: str,
+):
     # TODO: switch to python extractor to be able to detect partition
     # names to make this process fatal on failure
-    for partition in ctx.extract_partitions + ctx.firmware_partitions:
+
+    procs: parallel_input_cmds = []
+
+    for partition in extract_partitions:
         procs.append(
             (
                 partition,
@@ -219,52 +358,63 @@ def extract_payload_bin(ctx: ExtractCtx, file_path: str, output_dir: str):
             )
         )
 
-    process_cmds_in_parallel(procs)
+    _, ret_success = process_cmds_in_parallel(procs)
+
+    return ret_success
+
+
+def extract_payload_bin(ctx: ExtractCtx, file_path: str, output_dir: str):
+    extract_partitions = ctx.extract_partitions + ctx.firmware_partitions
+    while extract_partitions:
+        found_partitions = _extract_payload_bin(
+            extract_partitions,
+            file_path,
+            output_dir,
+        )
+
+        extract_partitions = find_alternate_partitions(
+            extract_partitions,
+            found_partitions,
+        )
+
+
+def partition_chunk_index(file_path: str):
+    _, chunk_index = path.splitext(file_path)
+
+    return int(chunk_index[1:])
 
 
 def extract_sparse_raw_imgs(file_paths: List[str], output_dir: str):
     new_file_paths = []
 
-    partition_chunks_map = {}
+    partition_chunks_map: dict[str, List[str]] = {}
     for file_path in file_paths:
         file_name = path.basename(file_path)
 
-        # Split extension to get chunk index x from
+        # Split extension to remove chunk index x from
         # partition.img_sparsechunk.x files
-        base_file_name, chunk_index = path.splitext(file_name)
+        base_file_name, _ = path.splitext(file_name)
 
-        if base_file_name.endswith(SPARSE_CHUNK_SUFFIX) and chunk_index:
-            # Sparse chunk, remove the suffix to get the partition name
+        if base_file_name.endswith(SPARSE_CHUNK_SUFFIX):
+            # Sparse chunk, remove _sparsechunk to get the partition name
             output_file_name = base_file_name[: -len(SPARSE_CHUNK_SUFFIX)]
-            # Remove dot from extension and cast to int find chunk index
-            chunk_index = int(chunk_index[1:])
         else:
             output_file_name = file_name
-            chunk_index = 0
-
-            # Rename single sparse image to .sparse to avoid naming conflicts
-            sparse_file_path = f'{file_path}.sparse'
+            # Rename single sparse image to _sparsechunk.0 to avoid naming conflicts
+            sparse_file_path = f'{file_path}{SPARSE_CHUNK_SUFFIX}.0'
             os.rename(file_path, sparse_file_path)
             file_path = sparse_file_path
 
         new_file_paths.append(file_path)
 
-        # Create a sparse list of the chunks, should be completely filled
-        # after iterating over all the file paths
-        # Do this to avoid splitting the file paths again to sort at the end
-        partition_chunks_map.setdefault(output_file_name, [])
-        partition_chunks = partition_chunks_map[output_file_name]
-        assert isinstance(partition_chunks, list)
-
-        missing_indices = chunk_index - len(partition_chunks) + 1
-        partition_chunks.extend([None] * missing_indices)
-        assert partition_chunks[chunk_index] is None
-
-        partition_chunks[chunk_index] = file_path
+        partition_chunks = partition_chunks_map.setdefault(output_file_name, [])
+        partition_chunks.append(file_path)
 
     procs: parallel_input_cmds = []
     for output_file_name, partition_chunks in partition_chunks_map.items():
         output_file_path = path.join(output_dir, output_file_name)
+
+        partition_chunks.sort(key=partition_chunk_index)
 
         procs.append(
             (
@@ -278,11 +428,20 @@ def extract_sparse_raw_imgs(file_paths: List[str], output_dir: str):
     return new_file_paths
 
 
-def extract_super_img(ctx: ExtractCtx, file_path: str, output_dir: str):
-    procs: parallel_input_cmds = []
+def unslot_partition(partition_slot: str):
+    return partition_slot.rsplit('_', 1)[0]
+
+
+def _extract_super_img(
+    extract_partitions: List[str],
+    file_path: str,
+    output_dir: str,
+):
     # TODO: switch to python lpunpack to be able to detect partition
     # names to make this process fatal on failure
-    for partition in ctx.extract_partitions:
+    procs: parallel_input_cmds = []
+
+    for partition in extract_partitions:
         for slot in ['', '_a']:
             partition_slot = f'{partition}{slot}'
             procs.append(
@@ -298,17 +457,40 @@ def extract_super_img(ctx: ExtractCtx, file_path: str, output_dir: str):
                 )
             )
 
-    process_cmds_in_parallel(procs)
+    _, ret_success = process_cmds_in_parallel(procs)
 
-    for partition in ctx.extract_partitions:
-        partition_a_img = f'{partition}_a.img'
-        partition_img = f'{partition}.img'
+    # Make sure that there are no duplicates
+    assert len(ret_success) == len(set(ret_success))
 
-        partition_a_path = path.join(output_dir, partition_a_img)
-        partition_path = path.join(output_dir, partition_img)
+    found_partitions = []
+    for partition_slot in ret_success:
+        partition = unslot_partition(partition_slot)
+        found_partitions.append(partition)
 
-        if path.exists(partition_a_path):
-            os.rename(partition_a_path, partition_path)
+        if partition == partition_slot:
+            continue
+
+        partition_path = path.join(output_dir, f'{partition}.img')
+        partition_slot_path = path.join(output_dir, f'{partition_slot}.img')
+
+        os.rename(partition_slot_path, partition_path)
+
+    return found_partitions
+
+
+def extract_super_img(ctx: ExtractCtx, file_path: str, output_dir: str):
+    extract_partitions = ctx.extract_partitions
+    while extract_partitions:
+        found_partitions = _extract_super_img(
+            extract_partitions,
+            file_path,
+            output_dir,
+        )
+
+        extract_partitions = find_alternate_partitions(
+            extract_partitions,
+            found_partitions,
+        )
 
 
 def extract_brotli_imgs(file_paths: List[str], output_path: str):
@@ -424,7 +606,12 @@ def get_dump_dir(
         # and use a temporary directory to extract
         with tempfile.TemporaryDirectory() as dump_dir:
             print(f'Extracting to temporary dump dir {dump_dir}')
-            yield dump_dir
+
+            try:
+                yield dump_dir
+            except GeneratorExit:
+                pass
+
             return
 
     # Remove the extension from the file and use it as a dump dir
@@ -442,47 +629,6 @@ def get_dump_dir(
     print(f'Extracting to new dump dir {dump_dir}')
     os.mkdir(dump_dir)
     yield dump_dir
-
-
-def should_extract_file_path(
-    ctx: ExtractCtx,
-    extract_partitions: List[str],
-    extract_file_names: List[str],
-    file_path: str,
-):
-    file_name = path.basename(file_path)
-
-    if should_extract_partition_file_name(
-        ctx.extract_partitions + extract_partitions,
-        file_name,
-    ):
-        return True
-
-    files = ctx.firmware_files + ctx.factory_files + extract_file_names
-    if file_name in files:
-        return True
-
-    for extract_pattern in ctx.extract_fns:
-        match = re.match(extract_pattern, file_name)
-        if match is not None:
-            return True
-
-    return False
-
-
-def filter_extract_file_paths(
-    ctx: ExtractCtx,
-    extract_partitions: List[str],
-    extract_file_names: List[str],
-    file_paths: List[str],
-):
-    fn = partial(
-        should_extract_file_path,
-        ctx,
-        extract_partitions,
-        extract_file_names,
-    )
-    return list(filter(fn, file_paths))
 
 
 def unzip_file(source: str, file_path: str, output_file_path: str):
@@ -504,21 +650,12 @@ def untar_file(tar: TarFile, file_path: str, output_file_path: str):
 def extract_zip(
     source: str,
     ctx: ExtractCtx,
-    extract_partitions: List[str],
-    extract_file_names: List[str],
     dump_dir: str,
 ):
     with ZipFile(source) as zip_file:
         file_paths = zip_file.namelist()
 
-    print_file_paths(file_paths, 'in zip')
-
-    file_paths = filter_extract_file_paths(
-        ctx,
-        extract_partitions,
-        extract_file_names,
-        file_paths,
-    )
+    file_paths = filter_extract_file_paths(ctx, file_paths)
 
     with ProcessPoolExecutor(len(file_paths)) as exe:
         for file_path in file_paths:
@@ -530,13 +667,7 @@ def extract_zip(
             exe.submit(unzip_file, source, file_path, output_file_path)
 
 
-def extract_tar(
-    source: str,
-    ctx: ExtractCtx,
-    extract_partitions: List[str],
-    extract_file_names: List[str],
-    dump_dir: str,
-):
+def extract_tar(source: str, ctx: ExtractCtx, dump_dir: str):
     if source.endswith('gz'):
         mode = 'r:gz'
     else:
@@ -544,20 +675,13 @@ def extract_tar(
 
     with tarfile.open(source, mode) as tar:
         file_paths = tar.getnames()
-        file_paths = filter_extract_file_paths(
-            ctx,
-            extract_partitions,
-            extract_file_names,
-            file_paths,
-        )
-
-        print_file_paths(file_paths, 'in tar')
+        file_paths = filter_extract_file_paths(ctx, file_paths)
 
         for file_path in file_paths:
             file_name = path.basename(file_path)
             output_file_path = path.join(dump_dir, file_name)
 
-            print(f'Processing {file_path}')
+            print(f'Extracting {file_path}')
 
             t = tar.extractfile(file_path)
             if t is None:
@@ -567,13 +691,7 @@ def extract_tar(
                 shutil.copyfileobj(t, f)
 
 
-def extract_image_file(
-    source: str,
-    ctx: ExtractCtx,
-    extract_partitions: List[str],
-    extract_file_names: List[str],
-    dump_dir: str,
-):
+def extract_image_file(source: str, ctx: ExtractCtx, dump_dir: str):
     if source.endswith('.zip'):
         extract_fn = extract_zip
     elif (
@@ -586,73 +704,60 @@ def extract_image_file(
         raise ValueError(f'Unexpected file type at {source}')
 
     print(f'Extracting file {source}')
-    extract_fn(
-        source,
-        ctx,
-        extract_partitions,
-        extract_file_names,
-        dump_dir,
-    )
+    extract_fn(source, ctx, dump_dir)
 
 
 def extract_image(source: str, ctx: ExtractCtx, dump_dir: str):
     source_is_file = path.isfile(source)
 
-    extract_partitions = [
-        'super',
-    ]
-
-    extract_file_names = [
-        'payload.bin',
-    ]
+    ctx.extra_partitions.append(SUPER_PARTITION_NAME)
+    ctx.extra_files.append(PAYLOAD_BIN_FILE_NAME)
 
     if source_is_file:
-        extract_image_file(
-            source,
-            ctx,
-            extract_partitions,
-            extract_file_names,
-            dump_dir,
-        )
+        extract_image_file(source, ctx, dump_dir)
 
     run_extract_fns(ctx, dump_dir)
 
-    payload_bin_paths = find_payload_paths(extract_file_names, dump_dir)
+    payload_bin_paths = find_payload_paths(
+        [PAYLOAD_BIN_FILE_NAME],
+        dump_dir,
+    )
     if payload_bin_paths:
         assert len(payload_bin_paths) == 1
-        print_file_paths(payload_bin_paths, 'payload.bin')
+        print_file_paths(payload_bin_paths, PAYLOAD_BIN_FILE_NAME)
         extract_payload_bin(ctx, payload_bin_paths[0], dump_dir)
         remove_file_paths(payload_bin_paths)
 
-    sparse_raw_paths = find_sparse_raw_image_paths(extract_partitions, dump_dir)
+    sparse_raw_paths = find_sparse_raw_paths(
+        ctx.extract_partitions + [SUPER_PARTITION_NAME],
+        dump_dir,
+    )
     if sparse_raw_paths:
         print_file_paths(sparse_raw_paths, 'sparse raw')
-        # Single sparse files are renamed to .sparse to avoid naming conflicts
+        # Single sparse files are renamed to _sparsechunk.0 to avoid naming conflicts
         # Retrieve the updated file paths
         sparse_raw_paths = extract_sparse_raw_imgs(sparse_raw_paths, dump_dir)
         remove_file_paths(sparse_raw_paths)
 
-    super_img_path = find_super_img_path(dump_dir)
-    if super_img_path:
-        print_file_paths([super_img_path], 'super.img')
-        extract_super_img(ctx, super_img_path, dump_dir)
-        remove_file_paths([super_img_path])
+    super_img_paths = find_super_img_paths([SUPER_IMG_NAME], dump_dir)
+    if super_img_paths:
+        assert len(super_img_paths) == 1
+        print_file_paths(super_img_paths, SUPER_IMG_NAME)
+        extract_super_img(ctx, super_img_paths[0], dump_dir)
+        remove_file_paths(super_img_paths)
 
-    brotli_paths = find_files_with_ext(
-        ctx.extract_partitions,
-        dump_dir,
-        BROTLI_EXT,
-    )
+    # Now that all partitions that could have been unpacked from their
+    # containers have been unpacked, update the extract_partitions
+    # to handle alternate partitions
+    update_extract_partitions(ctx, dump_dir)
+
+    brotli_paths = find_brotli_paths(ctx.extract_partitions, dump_dir)
     if brotli_paths:
         print_file_paths(brotli_paths, 'brotli')
         extract_brotli_imgs(brotli_paths, dump_dir)
         remove_file_paths(brotli_paths)
 
-    sparse_data_paths = find_files_with_ext(
-        ctx.extract_partitions,
-        dump_dir,
-        SPARSE_DATA_EXT,
-    )
+    sparse_data_paths = find_sparse_data_paths(ctx.extract_partitions, dump_dir)
     if sparse_data_paths:
         print_file_paths(sparse_data_paths, 'sparse data')
         extract_sparse_data_imgs(sparse_data_paths, dump_dir)
@@ -672,6 +777,8 @@ def extract_image(source: str, ctx: ExtractCtx, dump_dir: str):
 
     run_extract_fns(ctx, dump_dir)
 
+    move_sar_system_paths(dump_dir)
+
     move_alternate_partition_paths(dump_dir)
 
     for partition in ctx.extract_partitions:
@@ -686,24 +793,28 @@ def extract_image(source: str, ctx: ExtractCtx, dump_dir: str):
 
 
 def run_extract_fns(ctx: ExtractCtx, dump_dir: str):
-    for file in os.scandir(dump_dir):
-        for extract_pattern, extract_fns in ctx.extract_fns.items():
-            if not isinstance(extract_fns, list):
-                extract_fns = [extract_fns]
+    for extract_pattern, extract_fns in ctx.extract_fns.items():
+        if not isinstance(extract_fns, list):
+            extract_fns = [extract_fns]
 
-            processed_files = set()
+        found_files: List[str] = []
+        processed_files = set()
+        for file in os.scandir(dump_dir):
+            match = re.match(extract_pattern, file.name)
+            if match is not None:
+                found_files.append(file.path)
+
+        print_file_paths(found_files, f'pattern: "{extract_pattern}"')
+
+        for file_path in found_files:
+            file_name = path.basename(file_path)
+            print(f'Processing {file_name}')
             for extract_fn in extract_fns:
-                match = re.match(extract_pattern, file.name)
-                if match is None:
-                    continue
-
-                print_file_paths([file.path], f'pattern: "{extract_pattern}"')
-                print(f'Processing {file.name}')
-                processed_file = extract_fn(ctx, file.path, dump_dir)
+                processed_file = extract_fn(ctx, file_path, dump_dir)
                 if processed_file is not None:
                     processed_files.add(processed_file)
 
-            remove_file_paths(list(processed_files))
+        remove_file_paths(processed_files)
 
 
 def move_alternate_partition_paths(dump_dir: str):
@@ -712,20 +823,20 @@ def move_alternate_partition_paths(dump_dir: str):
     # dump directory to simplify file copying
     for (
         partition,
-        alternate_partition_paths,
+        alternate_partition_path,
     ) in ALTERNATE_PARTITION_PATH_MAP.items():
         partition_path = path.join(dump_dir, partition)
         if path.isdir(partition_path):
             continue
 
-        for partition_sub_path in alternate_partition_paths:
-            partition_path = path.join(dump_dir, partition_sub_path)
+        partition_path = path.join(dump_dir, alternate_partition_path)
+        if not path.isdir(partition_path):
+            continue
 
-            if not path.isdir(partition_path):
-                continue
+        shutil.move(partition_path, dump_dir)
 
-            shutil.move(partition_path, dump_dir)
 
+def move_sar_system_paths(dump_dir: str):
     # For System-as-Root, move system/ to system_root/ and system/system/
     # to system/
     system_dir = path.join(dump_dir, 'system')
