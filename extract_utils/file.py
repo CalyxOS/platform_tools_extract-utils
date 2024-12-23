@@ -43,6 +43,7 @@ BIN_PARTS = ['bin']
 class FileArgs(str, Enum):
     AB = 'AB'
     CERTIFICATE = 'CERTIFICATE'
+    EXTRACT_ONLY = 'EXTRACT_ONLY'
     MAKE_COPY_RULE = 'MAKE_COPY_RULE'
     MAKE_COPY_RULE_ONLY = 'MAKE_COPY_RULE_ONLY'
     MODULE = 'MODULE'
@@ -51,6 +52,7 @@ class FileArgs(str, Enum):
     DISABLE_DEPS = 'DISABLE_DEPS'
     FIX_SONAME = 'FIX_SONAME'
     FIX_XML = 'FIX_XML'
+    STRIP_DEBUG_SECTIONS = 'STRIP_DEBUG_SECTIONS'
     OVERRIDES = 'OVERRIDES'
     PRESIGNED = 'PRESIGNED'
     REQUIRED = 'REQUIRED'
@@ -62,6 +64,7 @@ class FileArgs(str, Enum):
 FILE_ARGS_TYPE_MAP = {
     FileArgs.AB: True,
     FileArgs.CERTIFICATE: str,
+    FileArgs.EXTRACT_ONLY: True,
     FileArgs.MAKE_COPY_RULE: True,
     FileArgs.MAKE_COPY_RULE_ONLY: True,
     FileArgs.MODULE: str,
@@ -70,6 +73,7 @@ FILE_ARGS_TYPE_MAP = {
     FileArgs.DISABLE_DEPS: True,
     FileArgs.FIX_SONAME: True,
     FileArgs.FIX_XML: True,
+    FileArgs.STRIP_DEBUG_SECTIONS: True,
     FileArgs.OVERRIDES: list,
     FileArgs.PRESIGNED: True,
     FileArgs.REQUIRED: list,
@@ -210,7 +214,7 @@ class File:
 
         return self
 
-    def set_dst(self, dst: str | None):
+    def set_dst(self, dst: Optional[str]):
         if dst is None or dst == self.src:
             self.dst = self.src
             self.has_dst = False
@@ -220,11 +224,11 @@ class File:
 
         return self
 
-    def set_hash(self, file_hash: str | None):
+    def set_hash(self, file_hash: Optional[str]):
         self.hash = file_hash
         return self
 
-    def set_fixup_hash(self, file_fixup_hash: str | None):
+    def set_fixup_hash(self, file_fixup_hash: Optional[str]):
         self.fixup_hash = file_fixup_hash
         return self
 
@@ -511,7 +515,7 @@ class FileList:
 
         return False
 
-    def __add_file(self, file: File, section: str | None):
+    def __add_file(self, file: File, section: Optional[str]):
         if FileArgs.SYMLINK in file.args:
             self.package_symlinks.add(file)
 
@@ -526,24 +530,33 @@ class FileList:
             if file.hash is not None:
                 self.pinned_files.add(file)
 
-        if FileArgs.MAKE_COPY_RULE_ONLY in file.args:
+        if (
+            FileArgs.MAKE_COPY_RULE_ONLY in file.args
+            or FileArgs.EXTRACT_ONLY in file.args
+        ):
             is_package = False
-        else:
-            is_package = self.__is_file_package(file)
-
-        if is_package or file.is_package:
-            if is_package and file.is_package:
+        elif self.__is_file_package(file):
+            if file.is_package:
                 color_print(
                     f'{file.dst}: already a package, no need for -',
                     color=Color.YELLOW,
                 )
+
+            is_package = True
+        else:
+            is_package = file.is_package
+
+        if is_package:
             self.package_files.add(file)
 
-        if (
-            not is_package
-            or FileArgs.MAKE_COPY_RULE in file.args
-            or FileArgs.MAKE_COPY_RULE_ONLY in file.args
-        ):
+        if FileArgs.EXTRACT_ONLY in file.args:
+            is_copy_rule = False
+        elif FileArgs.MAKE_COPY_RULE in file.args:
+            is_copy_rule = True
+        else:
+            is_copy_rule = not is_package
+
+        if is_copy_rule:
             self.copy_files.add(file)
 
         self.all_files.add(file)
@@ -562,7 +575,7 @@ class FileList:
     def add_from_lines(self, file_lines: Iterable[str]):
         sections_lines = split_lines_into_sections(file_lines)
 
-        files: List[Tuple[str | None, File]] = []
+        files: List[Tuple[Optional[str], File]] = []
 
         for lines in sections_lines:
             if not lines:

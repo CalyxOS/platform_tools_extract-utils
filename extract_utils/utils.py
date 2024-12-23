@@ -11,9 +11,9 @@ import importlib.util
 import os
 import shutil
 from enum import Enum
-from functools import cache
+from functools import lru_cache
 from subprocess import PIPE, Popen, run
-from typing import Generator, Iterable, List, Tuple
+from typing import Generator, Iterable, List, Optional, Tuple
 
 
 def import_module(module_name, module_path):
@@ -80,7 +80,7 @@ parallel_input_cmds_ret_success = List[str]
 parallel_input_cmds_ret_fail = List[Tuple[str, int, str]]
 
 
-@cache
+@lru_cache(maxsize=None)
 def executable_path(name: str) -> str:
     path = shutil.which(
         name,
@@ -143,7 +143,7 @@ def run_cmd(cmd: List[str], shell=False):
     return proc.stdout
 
 
-def uncomment_line(line: str) -> str | None:
+def uncomment_line(line: str) -> Optional[str]:
     line = line.strip()
 
     if not line.startswith('#'):

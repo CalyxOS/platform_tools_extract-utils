@@ -49,7 +49,7 @@ SUPER_PARTITION_NAME = 'super'
 SUPER_IMG_NAME = 'super.img'
 
 
-extract_fn_type = Callable[['ExtractCtx', str, str], str | None]
+extract_fn_type = Callable[['ExtractCtx', str, str], Optional[str]]
 extract_fns_value_type = Union[extract_fn_type, List[extract_fn_type]]
 extract_fns_user_type = fixups_user_type[extract_fns_value_type]
 extract_fns_type = fixups_type[extract_fns_value_type]
@@ -64,6 +64,7 @@ class ExtractCtx:
         firmware_partitions: Optional[List[str]] = None,
         firmware_files: Optional[List[str]] = None,
         factory_files: Optional[List[str]] = None,
+        extract_all=False,
     ):
         if extract_fns is None:
             extract_fns = {}
@@ -89,6 +90,8 @@ class ExtractCtx:
         self.firmware_files = firmware_files
         self.factory_files = factory_files
         self.extra_files: List[str] = []
+
+        self.extract_all = extract_all
 
 
 def file_name_to_partition(file_name: str):
@@ -238,6 +241,9 @@ def filter_extract_file_paths(
     ctx: ExtractCtx,
     file_paths: List[str],
 ):
+    if ctx.extract_all:
+        return file_paths
+
     return filter_files(
         [
             ctx.extract_partitions,

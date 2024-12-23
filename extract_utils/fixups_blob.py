@@ -12,7 +12,7 @@ import tempfile
 from contextlib import suppress
 from functools import partial
 from os import path
-from typing import List, Protocol, Self
+from typing import List, Optional, Protocol
 
 from extract_utils.elf import file_needs_lib
 from extract_utils.file import File
@@ -21,6 +21,7 @@ from extract_utils.tools import (
     DEFAULT_PATCHELF_VERSION,
     apktool_path,
     java_path,
+    llvm_strip_path,
     patchelf_version_path_map,
     stripzip_path,
 )
@@ -39,7 +40,7 @@ class blob_fixup_fn_impl_type(Protocol):
         file: File,
         file_path: str,
         *args,
-        tmp_dir: str | None = None,
+        tmp_dir: Optional[str] = None,
         **kwargs,
     ): ...
 
@@ -59,13 +60,13 @@ class blob_fixup:
         *args,
         need_tmp_dir=True,
         **kwargs,
-    ) -> Self:
+    ) -> blob_fixup:
         self.__functions.append((fn, args, kwargs))
         if need_tmp_dir:
             self.__create_tmp_dir = True
         return self
 
-    def patchelf_version(self, version: str) -> Self:
+    def patchelf_version(self, version: str) -> blob_fixup:
         self.__patchelf_path = patchelf_version_path_map[version]
         return self
 
@@ -89,7 +90,7 @@ class blob_fixup:
             ]
         )
 
-    def replace_needed(self, from_lib: str, to_lib: str) -> Self:
+    def replace_needed(self, from_lib: str, to_lib: str) -> blob_fixup:
         if len(from_lib) >= len(to_lib):
             to_lib = to_lib.ljust(len(from_lib), '\x00')
             impl = partial(
@@ -116,7 +117,7 @@ class blob_fixup:
 
         run_cmd([self.__patchelf_path, '--add-needed', lib, file_path])
 
-    def add_needed(self, lib: str) -> Self:
+    def add_needed(self, lib: str) -> blob_fixup:
         impl = partial(self.add_needed_impl, lib)
         return self.call(impl)
 
@@ -131,8 +132,25 @@ class blob_fixup:
     ):
         run_cmd([self.__patchelf_path, '--remove-needed', lib, file_path])
 
-    def remove_needed(self, lib: str) -> Self:
+    def remove_needed(self, lib: str) -> blob_fixup:
         impl = partial(self.remove_needed_impl, lib)
+        return self.call(impl)
+
+    def clear_symbol_version_impl(
+        self,
+        symbol: str,
+        ctx: BlobFixupCtx,
+        file: File,
+        file_path: str,
+        *args,
+        **kwargs,
+    ):
+        run_cmd(
+            [self.__patchelf_path, '--clear-symbol-version', symbol, file_path]
+        )
+
+    def clear_symbol_version(self, symbol: str) -> blob_fixup:
+        impl = partial(self.clear_symbol_version_impl, symbol)
         return self.call(impl)
 
     def fix_soname_impl(
@@ -142,7 +160,7 @@ class blob_fixup:
             [self.__patchelf_path, '--set-soname', file.basename, file_path]
         )
 
-    def fix_soname(self) -> Self:
+    def fix_soname(self) -> blob_fixup:
         return self.call(self.fix_soname_impl)
 
     def __get_patches(self, ctx: BlobFixupCtx, module_patches_path: str):
@@ -196,7 +214,7 @@ class blob_fixup:
 
             run_cmd(['git', 'apply'] + patches)
 
-    def patch_dir(self, patches_path: str) -> Self:
+    def patch_dir(self, patches_path: str) -> blob_fixup:
         impl = partial(self.patch_impl, patches_path)
         return self.call(impl, need_tmp_dir=True)
 
@@ -212,7 +230,7 @@ class blob_fixup:
         assert tmp_dir is not None
         shutil.copy(file_path, tmp_dir)
 
-    def copy_file_to_tmp(self) -> Self:
+    def copy_file_to_tmp(self) -> blob_fixup:
         return self.call(self.copy_file_to_tmp_impl, need_tmp_dir=True)
 
     def copy_file_from_tmp_impl(
@@ -228,10 +246,10 @@ class blob_fixup:
         tmp_file_path = path.join(tmp_dir, file.basename)
         shutil.copy(tmp_file_path, file_path)
 
-    def copy_file_from_tmp(self) -> Self:
+    def copy_file_from_tmp(self) -> blob_fixup:
         return self.call(self.copy_file_from_tmp_impl, need_tmp_dir=True)
 
-    def patch_file(self, patches_path: str) -> Self:
+    def patch_file(self, patches_path: str) -> blob_fixup:
         self.copy_file_to_tmp()
         self.patch_dir(patches_path)
         self.copy_file_from_tmp()
@@ -263,7 +281,7 @@ class blob_fixup:
             + unpack_args
         )
 
-    def apktool_unpack(self, unpack_args: List[str]) -> Self:
+    def apktool_unpack(self, unpack_args: List[str]) -> blob_fixup:
         impl = partial(self.apktool_unpack_impl, unpack_args)
         return self.call(impl)
 
@@ -290,7 +308,7 @@ class blob_fixup:
             ]
         )
 
-    def apktool_pack(self) -> Self:
+    def apktool_pack(self) -> blob_fixup:
         return self.call(self.apktool_pack_impl, need_tmp_dir=True)
 
     def stripzip_impl(
@@ -306,12 +324,26 @@ class blob_fixup:
     def stripzip(self):
         return self.call(self.stripzip_impl)
 
-    def apktool_patch(self, patches_path: str, *args) -> Self:
+    def apktool_patch(self, patches_path: str, *args) -> blob_fixup:
         self.apktool_unpack(list(args))
         self.patch_dir(patches_path)
         self.apktool_pack()
         self.stripzip()
         return self
+
+    def strip_debug_sections_impl(
+        self, ctx: BlobFixupCtx, file: File, file_path: str, *args, **kwargs
+    ):
+        run_cmd(
+            [
+                llvm_strip_path,
+                '--strip-debug',
+                file_path,
+            ]
+        )
+
+    def strip_debug_sections(self) -> blob_fixup:
+        return self.call(self.strip_debug_sections_impl)
 
     def regex_replace_impl(
         self,
@@ -331,7 +363,7 @@ class blob_fixup:
         with open(file_path, 'w', newline='', encoding='utf-8') as f:
             f.write(data)
 
-    def regex_replace(self, search: str, replace: str) -> Self:
+    def regex_replace(self, search: str, replace: str) -> blob_fixup:
         impl = partial(self.regex_replace_impl, search, replace)
         return self.call(impl)
 
@@ -353,7 +385,7 @@ class blob_fixup:
         with open(file_path, 'wb') as f:
             f.write(data)
 
-    def binary_regex_replace(self, search: bytes, replace: bytes) -> Self:
+    def binary_regex_replace(self, search: bytes, replace: bytes) -> blob_fixup:
         impl = partial(self.binary_regex_replace_impl, search, replace)
         return self.call(impl)
 
@@ -375,7 +407,7 @@ class blob_fixup:
                 f.seek(match.start(0))
                 f.write(replacement)
 
-    def sig_replace(self, pattern_str: str, replacement_str: str) -> Self:
+    def sig_replace(self, pattern_str: str, replacement_str: str) -> blob_fixup:
         pattern = bytes()
         replacement = bytes.fromhex(replacement_str)
 
@@ -413,7 +445,7 @@ class blob_fixup:
         with open(file_path, 'w', newline='', encoding='utf-8') as f:
             f.writelines(lines)
 
-    def fix_xml(self) -> Self:
+    def fix_xml(self) -> blob_fixup:
         return self.call(self.fix_xml_impl)
 
     def add_line_if_missing_impl(
@@ -433,12 +465,12 @@ class blob_fixup:
                 else:
                     f.write(f'\n{text}')
 
-    def add_line_if_missing(self, text: str) -> Self:
+    def add_line_if_missing(self, text: str) -> blob_fixup:
         fn = partial(self.add_line_if_missing_impl, text)
         return self.call(fn)
 
     def run(self, ctx: BlobFixupCtx, file: File, file_path: str) -> bool:
-        def run(tmp_dir: str | None = None):
+        def run(tmp_dir: Optional[str] = None):
             for function, args, kwargs in self.__functions:
                 function(ctx, file, file_path, *args, tmp_dir=tmp_dir, **kwargs)
 
