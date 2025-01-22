@@ -10,7 +10,7 @@ import tempfile
 from enum import Enum
 from functools import partial
 from os import path
-from typing import Callable, List, Optional, Set
+from typing import Callable, Iterable, List, Optional, Set
 
 from extract_utils.extract import extract_fns_user_type
 from extract_utils.file import File, FileArgs, FileList
@@ -234,15 +234,8 @@ class ProprietaryFile:
     def parse(self):
         self.file_list.add_from_file(self.file_list_path)
 
-    def get_files(self) -> Set[str]:
-        files = set()
-
-        for file in self.file_list.files:
-            files.add(file.src)
-            if file.has_dst:
-                files.add(file.dst)
-
-        return files
+    def get_files(self) -> Iterable[File]:
+        return self.file_list.files
 
     def get_partitions(self) -> Set[str]:
         return self.file_list.partitions
@@ -279,15 +272,6 @@ class FirmwareProprietaryFile(ProprietaryFile):
         )
 
         write_mk_guard_end(ctx.mk_out)
-
-    def get_partitions(self) -> Set[str]:
-        files = set()
-
-        for file in self.file_list.files:
-            partition, _ = path.splitext(file.dst)
-            files.add(partition)
-
-        return files
 
 
 class FactoryProprietaryFile(ProprietaryFile):
@@ -428,7 +412,10 @@ class ExtractUtilsModule:
 
         self.blob_fixups = flatten_fixups(blob_fixups)
         self.lib_fixups = flatten_fixups(lib_fixups)
-        self.extract_fns = flatten_fixups(extract_fns)
+
+        if extract_fns is None:
+            extract_fns = {}
+        self.extract_fns = extract_fns
 
         self.namespace_imports = namespace_imports
         self.check_elf = check_elf
@@ -481,7 +468,7 @@ class ExtractUtilsModule:
         return partitions
 
     def get_files(self, kind: ProprietaryFileType):
-        files: List[str] = []
+        files: List[File] = []
 
         for proprietary_file in self.proprietary_files:
             if proprietary_file.kind is not kind:
@@ -495,9 +482,6 @@ class ExtractUtilsModule:
 
     def get_extract_partitions(self, section: Optional[str]):
         return self.get_partitions(ProprietaryFileType.BLOBS, section)
-
-    def get_firmware_partitions(self):
-        return self.get_partitions(ProprietaryFileType.FIRMWARE)
 
     def get_firmware_files(self):
         return self.get_files(ProprietaryFileType.FIRMWARE)
@@ -1104,8 +1088,6 @@ class ExtractUtilsModule:
         section: Optional[str],
     ):
         with tempfile.TemporaryDirectory() as backup_dir:
-            os.makedirs(self.vendor_path, exist_ok=True)
-
             # Kang is usually combined with section, but allow them separately
             if not kang:
                 self.backup_pinned_files(backup_dir)
