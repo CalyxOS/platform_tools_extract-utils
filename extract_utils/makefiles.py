@@ -16,6 +16,7 @@ from extract_utils.elf import (
     get_file_machine_bits_libs,
     remove_libs_so_ending,
 )
+from extract_utils.elf_parser import EM
 from extract_utils.file import (
     CommonFileTree,
     File,
@@ -203,6 +204,11 @@ def write_elfs_package(
         machine, bits, libs = get_file_machine_bits_libs(f_path, gen_deps)
         if is_bin and (machine is None or bits is None):
             return write_sh_package(files[0], builder, any_extension=True)
+
+        if machine == EM.QDSP6:
+            libs = None
+            enable_check_elf = False
+            bits = f.inferred_bits
 
         deps = remove_libs_so_ending(libs)
         deps = run_libs_fixup(ctx.lib_fixups, deps, file.partition)
@@ -432,6 +438,23 @@ def write_packages_inclusion(package_names: List[str], out: TextIO):
         out.write(line)
 
     out.write('\n')
+
+
+def write_boot_jars(
+    ctx: MakefilesCtx,
+    base_file_tree: FileTree,
+):
+    if not list(base_file_tree):
+        return
+
+    ctx.product_mk_out.write('\nPRODUCT_BOOT_JARS +=')
+
+    for file in base_file_tree:
+        _, package_name = file_stem_package_name(file, can_have_stem=True)
+        line = f' \\\n    {package_name}'
+        ctx.product_mk_out.write(line)
+
+    ctx.product_mk_out.write('\n')
 
 
 def write_product_packages(

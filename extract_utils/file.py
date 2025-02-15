@@ -43,6 +43,7 @@ BIN_PARTS = ['bin']
 class FileArgs(str, Enum):
     AB = 'AB'
     CERTIFICATE = 'CERTIFICATE'
+    BOOT_JAR = 'BOOT_JAR'
     DUMMY_SHARED_LIB = 'DUMMY_SHARED_LIB'
     EXTRACT_ONLY = 'EXTRACT_ONLY'
     MAKE_COPY_RULE = 'MAKE_COPY_RULE'
@@ -65,6 +66,7 @@ class FileArgs(str, Enum):
 FILE_ARGS_TYPE_MAP = {
     FileArgs.AB: True,
     FileArgs.CERTIFICATE: str,
+    FileArgs.BOOT_JAR: True,
     FileArgs.DUMMY_SHARED_LIB: True,
     FileArgs.EXTRACT_ONLY: True,
     FileArgs.MAKE_COPY_RULE: True,
@@ -291,6 +293,15 @@ class File:
     def skip_preprocessed_apk_checks(self):
         return self.args.get(FileArgs.SKIPAPKCHECKS)
 
+    @property
+    def inferred_bits(self):
+        if self.contains_path_parts(LIB_PARTS):
+            return 32
+        elif self.contains_path_parts(LIB64_PARTS):
+            return 64
+        else:
+            raise ValueError(f'Cannot infer bits from file path: {self.src}')
+
 
 T = TypeVar('T')
 
@@ -482,6 +493,7 @@ class FileList:
         # packages_files is a FileTree to help with performance while grouping
         # multiple files of the same type together
         self.package_files = FileTree()
+        self.boot_jars = FileTree()
         self.dummy_shared_libs = FileTree()
         self.package_symlinks = SimpleFileList()
         self.copy_files = SimpleFileList()
@@ -521,6 +533,9 @@ class FileList:
     def __add_file(self, file: File, section: Optional[str]):
         if FileArgs.SYMLINK in file.args:
             self.package_symlinks.add(file)
+
+        if FileArgs.BOOT_JAR in file.args:
+            self.boot_jars.add(file)
 
         if FileArgs.DUMMY_SHARED_LIB in file.args:
             self.dummy_shared_libs.add(file)

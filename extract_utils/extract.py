@@ -215,8 +215,8 @@ def find_ext4_path(partition: str, input_path: str):
     )
 
 
-def find_payload_path(partition: str, input_path: str):
-    return find_file(input_path, partition, magic=b'CrAU')
+def find_payload_path(file_name: str, input_path: str):
+    return find_file(input_path, name=file_name, magic=b'CrAU')
 
 
 def find_super_img_path(partition: str, input_path: str):
@@ -462,13 +462,13 @@ def extract_partition(partition: str, dump_dir: str):
     if sparse_data_path:
         print_file_path(sparse_data_path, 'sparse data')
         extract_sparse_data_img(sparse_data_path, dump_dir)
-        remove_file_paths(sparse_data_path)
+        remove_file_path(sparse_data_path)
 
     erofs_path = find_erofs_path(partition, dump_dir)
     if erofs_path:
         print_file_path(erofs_path, 'EROFS')
         extract_erofs(erofs_path, dump_dir)
-        remove_file_paths(erofs_path)
+        remove_file_path(erofs_path)
 
     ext4_path = find_ext4_path(partition, dump_dir)
     if ext4_path:
