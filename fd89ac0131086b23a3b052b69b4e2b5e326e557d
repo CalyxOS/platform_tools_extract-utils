@@ -16,6 +16,24 @@
       "message": "For what it\u0027s worth, I ran `calyx/scripts/pixel/device.sh raven` and it worked; the output was the same. I think extract_utils is involved there, right? So it\u0027s at least still functional if so.",
       "revId": "fd89ac0131086b23a3b052b69b4e2b5e326e557d",
       "serverId": "35266860-6252-469c-a67d-185064479fc0"
+    },
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "71237202_b1b040ac",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000000
+      },
+      "writtenOn": "2025-04-16T17:03:49Z",
+      "side": 1,
+      "message": "Yes it is!",
+      "parentUuid": "60a5be91_86cb0a8b",
+      "revId": "fd89ac0131086b23a3b052b69b4e2b5e326e557d",
+      "serverId": "35266860-6252-469c-a67d-185064479fc0"
     }
   ]
 }
