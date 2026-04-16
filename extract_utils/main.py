@@ -121,6 +121,7 @@ class ExtractUtils:
                 self.__args.no_cleanup,
                 self.__args.extract_factory,
                 self.__args.section,
+                self.__args.allow_prohibited_files,
             )
             if not copied:
                 all_copied = False
@@ -191,7 +192,6 @@ class ExtractUtils:
                 list(extract_partitions),
                 firmware_files,
                 factory_files,
-                self.__args.extract_all,
             )
 
             source_ctx = SourceCtx(

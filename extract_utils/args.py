@@ -88,6 +88,11 @@ parser.add_argument(
     '--download-sha256',
     help='SHA256 of the download',
 )
+parser.add_argument(
+    '--allow-prohibited-files',
+    action='store_true',
+    help='Allow extraction of normally-prohibited files',
+)
 
 parser.add_argument(
     'source',
@@ -107,7 +112,6 @@ class ArgsSource(str, Enum):
 class Args:
     def __init__(self, args: argparse.Namespace):
         # Wrap to provide type hints
-        self.extract_all: bool = args.extract_all
         self.only_common: bool = args.only_common
         self.only_target: bool = args.only_target
         self.only_name: str = args.only_name
@@ -121,6 +125,7 @@ class Args:
         self.section: Optional[str] = args.section
         self.download_dir: Optional[str] = args.download_dir
         self.download_sha256: Optional[str] = args.download_sha256
+        self.allow_prohibited_files: bool = args.allow_prohibited_files
 
         if self.download_dir is None and DOWNLOAD_DIR_ENV_KEY in os.environ:
             self.download_dir = os.environ[DOWNLOAD_DIR_ENV_KEY]

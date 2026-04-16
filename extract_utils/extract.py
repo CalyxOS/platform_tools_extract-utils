@@ -6,10 +6,8 @@
 from __future__ import annotations
 
 import os
-import re
 import shutil
 import tarfile
-from concurrent.futures import ProcessPoolExecutor
 from os import path
 from tarfile import is_tarfile
 from typing import Callable, Dict, Iterable, List, Optional, Set, Union
@@ -17,6 +15,7 @@ from zipfile import ZipFile, is_zipfile
 
 from extract_utils.ext4 import EXT4_MAGIC, EXT4_MAGIC_OFFSET
 from extract_utils.extract_moto_piv import MOTO_PIV_MAGIC, extract_moto_piv
+from extract_utils.extract_recovery import extract_recovery_partition
 from extract_utils.file import File
 from extract_utils.lp import LpImage
 from extract_utils.sparse_img import SPARSE_HEADER_MAGIC, unsparse_images
@@ -25,7 +24,13 @@ from extract_utils.tools import (
     ota_extractor_path,
     sdat2img_path,
 )
-from extract_utils.utils import Color, color_print, run_cmd, scan_tree
+from extract_utils.utils import (
+    Color,
+    color_print,
+    find_file,
+    find_files,
+    run_cmd,
+)
 
 ALTERNATE_PARTITION_PATH_MAP = {
     'product': 'system/product',
@@ -79,7 +84,6 @@ class ExtractCtx:
         extract_partitions: Optional[List[str]] = None,
         firmware_files: Optional[List[File]] = None,
         factory_files: Optional[List[File]] = None,
-        extract_all: bool = False,
     ):
         if extract_fns is None:
             extract_fns = []
@@ -99,77 +103,6 @@ class ExtractCtx:
         # Files are extracted if their name matches as-is
         self.firmware_files = firmware_files
         self.factory_files = factory_files
-
-        self.extract_all = extract_all
-
-
-def file_name_to_partition(file_name: str):
-    return file_name.split('.', 1)[0]
-
-
-def find_files(
-    input_path: str,
-    partition: Optional[str] = None,
-    name: Optional[str] = None,
-    regex: Optional[str] = None,
-    magic: Optional[bytes] = None,
-    position: int = 0,
-    ext: Optional[str] = None,
-) -> List[str]:
-    file_paths: List[str] = []
-    for file in scan_tree(input_path):
-        if not file.is_file():
-            continue
-
-        file_partition_name = file_name_to_partition(file.name)
-        if partition is not None and partition != file_partition_name:
-            continue
-
-        if name is not None and name != file.name:
-            continue
-
-        if regex is not None and re.match(regex, file.name) is None:
-            continue
-
-        if ext is not None and not file.name.endswith(ext):
-            continue
-
-        if magic is not None:
-            with open(file, 'rb') as f:
-                f.seek(position)
-                file_magic = f.read(len(magic))
-                if file_magic != magic:
-                    continue
-
-        file_paths.append(file.path)
-
-    return file_paths
-
-
-def find_file(
-    input_path: str,
-    partition: Optional[str] = None,
-    name: Optional[str] = None,
-    regex: Optional[str] = None,
-    magic: Optional[bytes] = None,
-    position: int = 0,
-    ext: Optional[str] = None,
-):
-    file_paths = find_files(
-        input_path,
-        partition=partition,
-        name=name,
-        regex=regex,
-        magic=magic,
-        position=position,
-        ext=ext,
-    )
-
-    assert len(file_paths) <= 1
-    if file_paths:
-        return file_paths[0]
-
-    return None
 
 
 def find_alternate_partitions(
@@ -399,24 +332,19 @@ def extract_ext4(file_path: str, output_path: str):
     # TODO: check for symlinks like the old code?
 
 
-def unzip_file(source: str, file_path: str, output_file_path: str):
-    with ZipFile(source) as zip_file:
-        with zip_file.open(file_path) as z:
-            with open(output_file_path, 'wb') as f:
-                shutil.copyfileobj(z, f)
-
-
 def extract_zip(source: str, dump_dir: str):
     with ZipFile(source) as zip_file:
-        file_paths = zip_file.namelist()
+        for info in zip_file.infolist():
+            if info.is_dir():
+                continue
 
-    with ProcessPoolExecutor() as exe:
-        for file_path in file_paths:
-            output_file_path = path.join(dump_dir, file_path)
+            output_file_path = path.join(dump_dir, info.filename)
             output_dir = path.dirname(output_file_path)
             os.makedirs(output_dir, exist_ok=True)
 
-            exe.submit(unzip_file, source, file_path, output_file_path)
+            with zip_file.open(info) as z:
+                with open(output_file_path, 'wb') as f:
+                    shutil.copyfileobj(z, f)
 
 
 def extract_tar(source: str, dump_dir: str):
@@ -501,8 +429,12 @@ def find_partitions(dump_dir: str, ctx: ExtractCtx, missing: bool = False):
     partitions: List[str] = []
     for partition in ctx.extract_partitions:
         dump_partition_dir = path.join(dump_dir, partition)
+        exists = (
+            path.isdir(dump_partition_dir)
+            and len(os.listdir(dump_partition_dir)) != 0
+        )
 
-        if path.isdir(dump_partition_dir) != missing:
+        if exists != missing:
             partitions.append(partition)
 
     return partitions
@@ -550,14 +482,16 @@ def extract_all_partitions(dump_dir: str, ctx: ExtractCtx):
     partitions = normal_partitions + firmware_partitions
 
     while partitions:
-        with ProcessPoolExecutor() as exe:
-            for partition in partitions:
-                if partition in firmware_partitions:
-                    fn = extract_firmware_partition
+        for partition in partitions:
+            try:
+                if partition == 'recovery':
+                    extract_recovery_partition(partition, dump_dir)
+                elif partition in firmware_partitions:
+                    extract_firmware_partition(partition, dump_dir)
                 else:
-                    fn = extract_partition
-
-                exe.submit(fn, partition, dump_dir)
+                    extract_partition(partition, dump_dir)
+            except Exception as e:
+                print(f'Warning: Failed to extract partition {partition}: {e}')
 
         found_partitions = find_partitions(dump_dir, ctx)
         partitions = find_alternate_partitions(partitions, found_partitions)
@@ -614,7 +548,7 @@ def create_empty_partition_dirs(dump_dir: str, ctx: ExtractCtx):
         dump_partition_dir = path.join(dump_dir, partition)
         color_print(f'Partition {partition} not extracted', color=Color.YELLOW)
         # Create empty partition dir to prevent re-extraction
-        os.mkdir(dump_partition_dir)
+        os.makedirs(dump_partition_dir, exist_ok=True)
 
 
 def convert_dict_extract_fns(dict_extract_fns: extract_fns_dict_type):

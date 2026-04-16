@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import os
+import re
 import shutil
 from contextlib import contextmanager
 from enum import Enum
@@ -15,9 +16,19 @@ from functools import lru_cache
 from io import SEEK_CUR
 from mmap import mmap
 from os import DirEntry, path
+from pathlib import Path
 from subprocess import PIPE, run
 from types import ModuleType
-from typing import Any, BinaryIO, Callable, Generator, Iterable, List, Optional
+from typing import (
+    Any,
+    BinaryIO,
+    Callable,
+    Generator,
+    Iterable,
+    List,
+    Optional,
+    Union,
+)
 from urllib.request import Request, urlopen
 
 CHUNK_SIZE = 1024 * 1024
@@ -109,15 +120,29 @@ def executable_path(name: str) -> str:
     return exe_path
 
 
-def run_cmd(cmd: List[str], shell: bool = False):
+def _run_cmd(
+    cmd: List[str],
+    shell: bool = False,
+    text: bool = True,
+    data: Optional[Union[str, bytes]] = None,
+    cwd: Optional[Path] = None,
+):
+    if data is not None:
+        if text:
+            assert isinstance(data, str)
+        else:
+            assert isinstance(data, bytes)
+
     cmd[0] = executable_path(cmd[0])
     proc = run(
         cmd,
         stdout=PIPE,
         stderr=PIPE,
-        text=True,
+        input=data,
+        text=text,
         shell=shell,
         check=False,
+        cwd=cwd,
     )
     if proc.returncode != 0:
         cmd_str = ' '.join(cmd)
@@ -125,7 +150,46 @@ def run_cmd(cmd: List[str], shell: bool = False):
         s += f'stdout:\n{proc.stdout}\n'
         s += f'stderr:\n{proc.stderr}\n'
         raise ValueError(s)
+
+    if text:
+        assert isinstance(proc.stdout, str)
+    else:
+        assert isinstance(proc.stdout, bytes)
+
     return proc.stdout
+
+
+def run_cmd(
+    cmd: List[str],
+    shell: bool = False,
+    data: Optional[str] = None,
+    cwd: Optional[Path] = None,
+):
+    output = _run_cmd(
+        cmd,
+        shell=shell,
+        data=data,
+        cwd=cwd,
+    )
+    assert isinstance(output, str)
+    return output
+
+
+def run_cmd_bytes(
+    cmd: List[str],
+    shell: bool = False,
+    data: Optional[bytes] = None,
+    cwd: Optional[Path] = None,
+):
+    output = _run_cmd(
+        cmd,
+        shell=shell,
+        data=data,
+        cwd=cwd,
+        text=False,
+    )
+    assert isinstance(output, bytes)
+    return output
 
 
 def uncomment_line(line: str) -> Optional[str]:
@@ -305,3 +369,72 @@ def read_mmap_chunked(
 def write_zero(f: BinaryIO, size: int):
     f.seek(size - 1, SEEK_CUR)
     f.write(b'\x00')
+
+
+def file_name_to_partition(file_name: str):
+    return file_name.split('.', 1)[0]
+
+
+def find_files(
+    input_path: str,
+    partition: Optional[str] = None,
+    name: Optional[str] = None,
+    regex: Optional[str] = None,
+    magic: Optional[bytes] = None,
+    position: int = 0,
+    ext: Optional[str] = None,
+) -> List[str]:
+    file_paths: List[str] = []
+    for file in scan_tree(input_path):
+        if not file.is_file():
+            continue
+
+        file_partition_name = file_name_to_partition(file.name)
+        if partition is not None and partition != file_partition_name:
+            continue
+
+        if name is not None and name != file.name:
+            continue
+
+        if regex is not None and re.match(regex, file.name) is None:
+            continue
+
+        if ext is not None and not file.name.endswith(ext):
+            continue
+
+        if magic is not None:
+            with open(file, 'rb') as f:
+                f.seek(position)
+                file_magic = f.read(len(magic))
+                if file_magic != magic:
+                    continue
+
+        file_paths.append(file.path)
+
+    return file_paths
+
+
+def find_file(
+    input_path: str,
+    partition: Optional[str] = None,
+    name: Optional[str] = None,
+    regex: Optional[str] = None,
+    magic: Optional[bytes] = None,
+    position: int = 0,
+    ext: Optional[str] = None,
+):
+    file_paths = find_files(
+        input_path,
+        partition=partition,
+        name=name,
+        regex=regex,
+        magic=magic,
+        position=position,
+        ext=ext,
+    )
+
+    assert len(file_paths) <= 1
+    if file_paths:
+        return file_paths[0]
+
+    return None
