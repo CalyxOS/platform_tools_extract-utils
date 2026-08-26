@@ -232,6 +232,8 @@ def split_rust_dylib_deps(
     for dep in deps:
         if dep.endswith(RUST_DYLIB_STEM_SUFFIX):
             rust_deps.append(dep[: -len(RUST_DYLIB_STEM_SUFFIX)])
+        elif dep.endswith('-rust'):
+            rust_deps.append(dep)
         else:
             shared_deps.append(dep)
 
@@ -471,6 +473,9 @@ def write_framework_package(file: File, builder: FileBpBuilder):
         .specific()
     )
 
+    if file.partition == 'system_ext' and FileArgs.BOOT_JAR in file.args:
+        builder.set('use_generic_config', True)
+
     return package_name
 
 
@@ -570,6 +575,10 @@ def write_boot_jars(
 
     for file in base_file_tree:
         _, package_name = file_stem_package_name(file, can_have_stem=True)
+
+        if file.partition == 'system_ext':
+            package_name = f'system_ext:{package_name}'
+
         line = f' \\\n    {package_name}'
         ctx.product_mk_out.write(line)
 
